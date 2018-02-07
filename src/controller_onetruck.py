@@ -15,7 +15,7 @@ class Controller():
     send commands to the truck. """
     def __init__(self, node_name, position_topic_type, position_topic_name,
         control_topic_type, control_topic_name,
-        v = 0, k_p = 0, k_i = 0, k_d = 0, truck_id = 2):
+        v = 0, k_p = 0, k_i = 0, k_d = 0, vehicle_id = 2):
 
         # List of strings used by the GUI to see which values it can adjust.
         self.adjustables = ['k_p', 'k_i', 'k_d', 'v']
@@ -25,7 +25,7 @@ class Controller():
 
         self.stop_angle = 0
 
-        self.truck_id = truck_id
+        self.vehicle_id = vehicle_id
 
         # Radii and center for reference path ellipse.
         self.xr = 0
@@ -52,7 +52,7 @@ class Controller():
         # Create frenet controller.
         self.frenet = frenetpid.FrenetPID(self.pt, k_p, k_i, k_d)
 
-        print('\nController initialized. Truck {}.\n'.format(self.truck_id))
+        print('\nController initialized. Truck {}.\n'.format(self.vehicle_id))
 
 
     def _callback(self, data):
@@ -63,7 +63,8 @@ class Controller():
         yaw = data.theta
         vel = 1
 
-        self._control(x, y, yaw, vel)
+        if data.id == self.vehicle_id:
+            self._control(x, y, yaw, vel)
 
 
     def _control(self, x, y, yaw, vel):
@@ -73,7 +74,7 @@ class Controller():
 
             omega = self.frenet.get_omega(x, y, yaw, vel)
 
-            self.pub.publish(self.truck_id, 1, omega)
+            self.pub.publish(self.vehicle_id, 1, omega)
 
             self.stop_angle = 0
 
@@ -84,9 +85,9 @@ class Controller():
         """Stops/pauses the controller. """
         t = 0.05
 
-        self.pub.publish(self.truck_id, 0, self.stop_angle)
+        self.pub.publish(self.vehicle_id, 0, self.stop_angle)
         time.sleep(t)
-        self.pub.publish(self.truck_id, 0, self.stop_angle)
+        self.pub.publish(self.vehicle_id, 0, self.stop_angle)
 
         if self.running:
             self.running = False
@@ -160,7 +161,7 @@ class Controller():
 
 
 def main(args):
-    truck_id = '/v1'
+    vehicle_id = '/' + args[1]
 
     # Information for controller subscriber.
     node_name = 'controller'
@@ -187,7 +188,7 @@ def main(args):
         node_name, position_topic_type, position_topic_name,
         control_topic_type, control_topic_name,
         v = v, k_p = k_p, k_i = k_i, k_d = k_d,
-        truck_id = truck_id)
+        vehicle_id = vehicle_id)
 
     # Set reference path.
     controller.set_reference_path([x_radius, y_radius], center)

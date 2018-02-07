@@ -8,8 +8,9 @@ from trucksim.msg import vehicleposition
 import vehicle
 
 
-
 class VehicleNode(vehicle.Vehicle):
+    """Class for simulating the movement of a vehicle. The vehicle is identified
+    with the name of the ROS node. """
 
     def __init__(self, x = [0, 0, 0], u = [0, 0], frequency = 20,
         name = None):
@@ -47,9 +48,9 @@ class VehicleNode(vehicle.Vehicle):
 
 
     def _callback(self, data):
-        """Method called when subscriber receives data. Update input if the
-        published ID is the same as the ID of this node. """
-        if data.truck_id == rospy.get_name():
+        """Method called when subscriber receives data. Updates the input if the
+        published ID is the same as the ID of the node. """
+        if data.id == rospy.get_name():
             self.set_input([data.speed, data.omega])
 
 
@@ -65,6 +66,7 @@ class VehicleNode(vehicle.Vehicle):
 
 
     def __str__(self):
+        """Returns the name of the node as well as the vehicle position. """
         return rospy.get_name() + ': ' + super(VehicleNode, self).__str__()
 
 
