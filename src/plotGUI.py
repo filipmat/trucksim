@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 
 # Class for GUI that plots the truck trajectories. Subscribes to the topic where
-# the truck positions are published. 
+# the truck positions are published.
 
 # TODO
-# Remove inactive trucks from the window.
-# Support fixed displayed tail length.
 # Add/fix recording of data.
 
 import rospy
@@ -22,51 +20,69 @@ import path
 class TruckPlot():
     """Class for GUI that plots the truck trajectories. """
     def __init__(self, root, node_name, topic_type, topic_name,
-        filename = 'record', width = 5, height = 5, display_tail = False,
-        win_size = 600, display_path = False, clear_seconds = 60):
+        filename = 'record', width = 5, height = 5, win_size = 600,  clear_seconds = 60, inactivity_time_limit = 20):
+        """
+        Parameters
+        filename: string, prefix for saved files.
+        width, height: floats, width and height of the plot area in meters.
+        win_size: integer, height of the GUI in pixels.
+        clear_seconds: integer, how often the trajectories should be cleared
+            automatically. Set to 0 to never clear trajectories automatically.
+        inactivity_time_limit: integer, how long a vehicle can stay inactive
+            before it is removed. Set to 0 to never remove inactive vehicles.
+        """
         self.root = root
         self.width = float(width)       # Real width (meters) of the window.
         self.height = float(height)
         self.win_height = win_size      # Graphical window height.
         self.win_width = int(self.win_height*self.width/self.height)
         self.filename_prefix = filename
-        self.display_tail = display_tail
-        self.display_path = display_path
+        self.display_tail = False
+        self.display_path = False
         self.node_name = node_name      # Subscriber node name.
         self.topic_name = topic_name    # Subscriber topic name.
         self.topic_type = topic_type    # Subscriber topic type.
 
-        self.pt = path.Path()       # A fixed path to draw.
+        # Reference path.
+        self.pt = path.Path()
+        self.PATH_TAG = 'path'
+        self.PATH_COLOR = 'blue'
+        self.xr = 0             # Reference path ellipse radii.
+        self.yr = 0
+        self.xc = 0             # Reference path ellipse center.
+        self.yc = 0
 
+        # Parameters for recording data.
         self.recording = False
         self.timestamp = 0
         self.rec_start_time = 0
 
-        self.new_data = {}
-        self.old_data = {}
-        self.callback_nr = 0
-
-        self.xr = 0
-        self.yr = 0
-        self.xc = 0
-        self.yc = 0
-
-        self.clear_seconds = clear_seconds # Clear trajectories periodically.
+        # Parameters for periodically clearing trajectories.
+        self.clear_seconds = clear_seconds
         if self.clear_seconds == 0:
             self.clear_periodically = False
         else:
             self.clear_periodically = True
 
-        # Dict containing truck polygons.
+        # Parameters for periodiclly checking for inactive vehicles.
+        self.inactivity_time_limit = inactivity_time_limit
+        if self.inactivity_time_limit == 0:
+            self.remove_inactive_vehicles = False
+        else:
+            self.remove_inactive_vehicles = True
+        self.inactivity_check_delay = 2000  # How often method calls itself, ms.
+
+        # Dicts for keeping track of vehicle information.
         self.vehicles = dict()
         self.vehicle_colors = dict()
         self.old_positions = dict()
+        self.last_published_time = dict()
 
         # Stuff for canvas.
         bg_color = 'SlateGray2'
         w1 = 15
         ypad = 10
-        self.truckl = 0.27
+        self.truckl = 0.27  # Real vehicle length.
         self.truckw = 0.15
 
         # Setup subscriber node.
@@ -86,20 +102,10 @@ class TruckPlot():
         self.canv.pack(in_ = canv_frame)
         self.canv.bind('<Button-1>', self._left_click)
 
-        # Create the truck polygons.
-        self.truck_colors = ['red', 'green', 'black']
-        tr1 = self.canv.create_polygon(0, 0, 0, 0, 0, 0,
-            fill = self.truck_colors[0])
-        tr2 = self.canv.create_polygon(0, 0, 0, 0, 0, 0,
-            fill = self.truck_colors[1])
-        tr3 = self.canv.create_polygon(0, 0, 0, 0, 0, 0,
-            fill = self.truck_colors[2])
-
-        self.trucks = [tr1, tr2, tr3]
-        self.truck_active = [True, False, False]
-
-        self.colors = ['blue', 'green', 'yellow', 'orange', 'red', 'pink',
-            'purple', 'cyan', 'dark green', 'coral', 'purple4', 'brown1']
+        # Available colors for the vehicles.
+        self.available_colors = ['blue', 'green', 'yellow', 'orange', 'red',
+            'pink', 'purple', 'cyan', 'dark green', 'coral', 'purple4',
+            'brown1']
 
         # Create frame next to the canvas for buttons, labels etc.
         right_frame = tk.Frame(self.root, background = bg_color)
@@ -232,6 +238,9 @@ class TruckPlot():
         # Start repeated clearing of trajectories.
         self._clear_trajectories_periodically()
 
+        # Start repeated removal of inactive trucks.
+        self._remove_inactive_vehicles()
+
 
     def _make_entry(self, framep, background, caption, **options):
         """Creates an entry widget. """
@@ -286,6 +295,9 @@ class TruckPlot():
 
 
     def _callback(self, data):
+        """Subscriber callback method. Called when receiving data on the topic.
+        Moves the vehicle corresponding to the id in the data or creates a new
+        vehicle if it does not exist. """
         vehicle_id = data.id
         x = data.x
         y = data.y
@@ -297,39 +309,101 @@ class TruckPlot():
         except KeyError:
             self._create_new_truck(vehicle_id, x, y, theta)
 
+        # Store last time data was published in order to check inactivity.
+        self.last_published_time[vehicle_id] = time.time()
 
-    def _create_new_truck(self, vehicle_id, x, y, theta):
+
+    def _move_truck(self, vehicle_id, x, y, theta):
+        """Moves a truck triangle to the new position. """
         xf, yf, xr, yr, xl, yl = self._get_triangle_corners(x, y, theta)
 
+        # Move polygon.
+        self.canv.coords(self.vehicles[vehicle_id], xf, yf, xr, yr, xl, yl)
+
+
+    def _create_new_truck(self, vehicle_id, x, y, theta):
+        """Creates a new vehicle triangle on the canvas. Adds the vehicle to
+        the dictionaries. """
+        print('Vehicle {} added.'.format(vehicle_id))
+
+        xf, yf, xr, yr, xl, yl = self._get_triangle_corners(x, y, theta)
         color = self._get_random_color()
 
+        # Create triangle.
         self.vehicles[vehicle_id] = self.canv.create_polygon(
             xf, yf, xr, yr, xl, yl, fill = color)
 
-        self.vehicle_colors[vehicle_id] = color
+        self.vehicle_colors[vehicle_id] = color # Store vehicle color.
 
-        self.old_positions[vehicle_id] = [x, y]
+        self.old_positions[vehicle_id] = [x, y] # Store previous position.
 
 
     def _get_random_color(self):
-        color = random.choice(self.colors)
+        """Returns a random color from the list of available colors. """
+        color = random.choice(self.available_colors)
         return color
 
 
     def _draw_tail(self, vehicle_id, x, y, theta):
+        """Draws the last movement of the vehicle. """
         if self.display_tail:
             state = tk.NORMAL
         else:
             state = tk.HIDDEN
 
+        # Draw a line from the old position to the new.
         self._plot_sequence(
             [[self.old_positions[vehicle_id][0],
                 self.old_positions[vehicle_id][1]],
             [x, y]],
-            join = False, clr = self.vehicle_colors[vehicle_id], tag = 'traj',
-            state = state)
+            join = False, clr = self.vehicle_colors[vehicle_id],
+            tag = vehicle_id, state = state)
 
+        # Update old vehicle position.
         self.old_positions[vehicle_id] = [x, y]
+
+
+    def _remove_inactive_vehicles(self):
+        """Removes vehicles that have not published a position for a certain
+        amount of time. Method calls itself periodically. """
+        inactive_ids = []
+
+        if self.remove_inactive_vehicles:
+            # Find which vehicles are inactive.
+            for vehicle_id in self.last_published_time:
+                if time.time() - self.last_published_time[vehicle_id] > \
+                    self.inactivity_time_limit:
+                    inactive_ids.append(vehicle_id)
+
+            # Remove all inactive vehicles.
+            for vehicle_id in inactive_ids:
+                self._remove_vehicle(vehicle_id)
+
+        # Call method again after a delay.
+        self.root.after(
+            self.inactivity_check_delay, self._remove_inactive_vehicles)
+
+
+    def _remove_vehicle(self, vehicle_id):
+        """Removes the vehicle. """
+        print('Vehicle {} removed because of inactivity.'.format(vehicle_id))
+
+        self._remove_vehicle_drawings(vehicle_id)
+        self._remove_vehicle_information(vehicle_id)
+
+
+    def _remove_vehicle_drawings(self, vehicle_id):
+        """Removes all traces of the vehicle from the canvas. """
+        self.canv.delete(self.vehicles[vehicle_id])
+        self.canv.delete(vehicle_id)
+
+
+    def _remove_vehicle_information(self, vehicle_id):
+        """Removes all stored information about the vehicle. """
+        del self.vehicles[vehicle_id]
+        del self.vehicle_colors[vehicle_id]
+        del self.old_positions[vehicle_id]
+        del self.last_published_time[vehicle_id]
 
 
     def _draw_coordinate_frame(self):
@@ -351,41 +425,24 @@ class TruckPlot():
             text = '({:.1f}, {:.1f})'.format(
                 -self.width/2, self.height/2),
             anchor = 'nw', tag = cftag)
+
         self.canv.create_text(
             d, self.win_height - d,
             text = '({:.1f}, {:.1f})'.format(
                 -self.width/2, -self.height/2),
             anchor = 'sw', tag = cftag)
+
         self.canv.create_text(
             self.win_width - d, self.win_height - d,
             text = '({:.1f}, {:.1f})'.format(
                 self.width/2, -self.height/2),
             anchor = 'se', tag = cftag)
+
         self.canv.create_text(
             self.win_width - d, d,
             text = '({:.1f}, {:.1f})'.format(
                 self.width/2, self.height/2),
             anchor = 'ne', tag = cftag)
-
-
-    def _find_active_trucks(self):
-        """Returns which trucks are active. Calls itself repeatedly.
-        Checks if a truck is active by checking if the yaw value is not
-        identically zero. """
-        delay = 500
-        active = [False for i in self.truck_active]
-
-        for i in range(len(active)):
-            try:
-                if self.new_data[i][2] != 0:
-                    active[i] = True
-            except:
-                pass
-
-        self.truck_active = active
-
-
-        self.root.after(delay, self._find_active_trucks)
 
 
     def _draw_closest_point(self, xy, clr = 'blue'):
@@ -421,15 +478,6 @@ class TruckPlot():
                 print('Error when plotting sequence: {}'.format(e))
 
 
-    def _move_truck(self, vehicle_id, xreal, yreal, yaw):
-        """Moves a truck triangle to the new position. """
-        xf, yf, xr, yr, xl, yl = self._get_triangle_corners(xreal, yreal, yaw)
-
-        #self.canv.tag_raise(truck)  # Move to top level of canvas.
-        # Move polygon.
-        self.canv.coords(self.vehicles[vehicle_id], xf, yf, xr, yr, xl, yl)
-
-
     def _get_triangle_corners(self, xreal, yreal, yaw):
         """Returns the three coordinate pairs in pixel for the triangle
         corresponding to the vehicle position. """
@@ -458,10 +506,22 @@ class TruckPlot():
         trajectories. """
         if self.traj_button_var.get() == 1:
             self.display_tail = True
-            self._show_canvas_tag('traj')
+            self._show_trajectories()
         else:
             self.display_tail = False
-            self._hide_canvas_tag('traj')
+            self._hide_trajectories()
+
+
+    def _hide_trajectories(self):
+        """Hides all vehicle trajectories. """
+        for vehicle_id in self.vehicles:
+            self._hide_canvas_tag(vehicle_id)
+
+
+    def _show_trajectories(self):
+        """Shows all vehicle trajectories. """
+        for vehicle_id in self.vehicles:
+            self._show_canvas_tag(vehicle_id)
 
 
     def _path_btn_callback(self):
@@ -469,12 +529,11 @@ class TruckPlot():
         reference path. """
         if self.path_button_var.get() == 1:
             self.display_path = True
-            self._plot_sequence(self.pt.path, join = True, tag = 'path',
-                clr = 'blue', width = 2)
+            self._draw_path()
             self.clear_button.config(state = 'normal')
         else:
             self.display_path = False
-            self.canv.delete('path')
+            self.canv.delete(self.PATH_TAG)
 
 
     def _record_data(self):
@@ -482,11 +541,6 @@ class TruckPlot():
         if self.recording:
             # Gather data to be written into a list.
             values = []
-            for truck in self.new_data:
-                for value in truck:
-                    values.append(value)
-
-            values.append(self.timestamp)
 
             self._write_data(values) # Write list to file.
 
@@ -610,6 +664,8 @@ class TruckPlot():
 
 
     def _clear_trajectories_periodically(self):
+        """Clears all vehicle trajectories. Method calls itself after a certain
+        time delay. """
         if self.clear_periodically:
             self._clear_trajectories()
         self.root.after(
@@ -618,14 +674,16 @@ class TruckPlot():
 
     def _clear_trajectories(self):
         """Clear the saved truck trajectories. """
-        self.canv.delete('traj')
+        print('Trajectories cleared. ')
+        for vehicle_id in self.vehicles:
+            self.canv.delete(vehicle_id)
 
 
     def _draw_path(self):
         """Draws the reference path. """
         if self.display_path:
-            self._plot_sequence(self.pt.path, join = True, tag = 'path',
-                clr = 'blue', width = 2)
+            self._plot_sequence(self.pt.path, join = True, tag = self.PATH_TAG,
+                clr = self.PATH_COLOR, width = 2)
 
 
     def load_path(self, filename):
@@ -656,7 +714,7 @@ class TruckPlot():
         self.yc_var.set(self.yc)
 
         self.pt.gen_circle_path([self.xr, self.yr], points, [self.xc, self.yc])
-        self.canv.delete('path')
+        self.canv.delete(self.PATH_TAG)
         self._draw_path()
 
 

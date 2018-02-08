@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import rospy
+import sys
+import math
 
 from trucksim.msg import vehiclecontrol
 from trucksim.msg import vehicleposition
@@ -70,9 +72,14 @@ class VehicleNode(vehicle.Vehicle):
         return rospy.get_name() + ': ' + super(VehicleNode, self).__str__()
 
 
-def main():
-    pass
+def main(args):
+    if len(args) > 1:
+        vn = VehicleNode([0, 0, math.pi], [0., 0.], name = args[1])
+    else:
+        vn = VehicleNode([0, 0, math.pi], [0., 0.])
+
+    vn.run()
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv)
