@@ -4,7 +4,8 @@ import rospy
 import sys
 import math
 
-from trucksim.msg import vehiclecontrol
+from trucksim.msg import vehiclespeed
+from trucksim.msg import vehicleomega
 from trucksim.msg import vehicleposition
 
 import vehicle
@@ -19,16 +20,21 @@ class VehicleNode(vehicle.Vehicle):
 
         # Node and topic names and types.
         DEFAULT_NAME = 'vehicle'
-        CONTROL_TOPIC_NAME = 'vehicle_control'
+        SPEED_TOPIC_NAME = 'vehicle_speed'
+        OMEGA_TOPIC_NAME = 'vehicle_omega'
         POSITION_TOPIC_NAME = 'vehicle_position'
-        CONTROL_TOPIC_TYPE = vehiclecontrol
+        SPEED_TOPIC_TYPE = vehiclespeed
+        OMEGA_TOPIC_TYPE = vehicleomega
         POSITION_TOPIC_TYPE = vehicleposition
 
         # Initialize superclass.
         super(VehicleNode, self).__init__(x, u)
 
         # Subscriber for receiving control inputs.
-        rospy.Subscriber(CONTROL_TOPIC_NAME, CONTROL_TOPIC_TYPE, self._callback)
+        rospy.Subscriber(SPEED_TOPIC_NAME, SPEED_TOPIC_TYPE,
+            self._speed_callback)
+        rospy.Subscriber(OMEGA_TOPIC_NAME, OMEGA_TOPIC_TYPE,
+            self._omega_callback)
 
         # Publisher for publishing vehicle position.
         self.pub = rospy.Publisher(
@@ -49,11 +55,18 @@ class VehicleNode(vehicle.Vehicle):
         print('Vehicle node initialized, id: {}'.format(rospy.get_name()))
 
 
-    def _callback(self, data):
+    def _speed_callback(self, data):
         """Method called when subscriber receives data. Updates the input if the
         published ID is the same as the ID of the node. """
         if data.id == rospy.get_name():
-            self.set_input([data.speed, data.omega])
+            self.set_speed(data.speed)
+
+
+    def _omega_callback(self, data):
+        """Method called when subscriber receives data. Updates the input if the
+        published ID is the same as the ID of the node. """
+        if data.id == rospy.get_name():
+            self.set_omega(data.omega)
 
 
     def run(self):

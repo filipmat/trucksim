@@ -41,6 +41,14 @@ class Vehicle(object):
         self.u = u
 
 
+    def set_speed(self, v):
+        self.u[0] = v
+
+
+    def set_omega(self, omega):
+        self.u[1] = omega
+
+
     def __str__(self):
         """Returns the current state in string format. """
         str = 'x = ['

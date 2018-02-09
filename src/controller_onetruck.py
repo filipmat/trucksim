@@ -6,7 +6,8 @@ import sys
 import time
 
 from trucksim.msg import vehicleposition
-from trucksim.msg import vehiclecontrol
+from trucksim.msg import vehiclespeed
+from trucksim.msg import vehicleomega
 import path
 import frenetpid
 
@@ -14,7 +15,8 @@ class Controller():
     """Class for subscribing to vehicle positions, calculate control input, and
     send commands to the vehicle. """
     def __init__(self, position_topic_type, position_topic_name,
-        control_topic_type, control_topic_name, vehicle_id,
+        speed_topic_type, speed_topic_name,
+        omega_topic_type, omega_topic_name, vehicle_id,
         node_name = 'controller', v = 1, k_p = 0, k_i = 0, k_d = 0):
 
         self.v = v                      # Desired velocity of the vehicle.
@@ -31,7 +33,10 @@ class Controller():
             position_topic_name, position_topic_type, self._callback)
 
         # Publisher for controlling vehicle.
-        self.pub = rospy.Publisher(control_topic_name, control_topic_type,
+        self.pub_speed = rospy.Publisher(speed_topic_name, speed_topic_type,
+            queue_size = 1)
+
+        self.pub_omega = rospy.Publisher(omega_topic_name, omega_topic_type,
             queue_size = 1)
 
         # Create reference path object.
@@ -65,7 +70,8 @@ class Controller():
             omega = self.frenet.get_omega(x, y, theta, vel)
 
             # Publish control commands to the topic.
-            self.pub.publish(self.vehicle_id, self.v, omega)
+            self.pub_omega.publish(self.vehicle_id, omega)
+            self.pub_speed.publish(self.vehicle_id, self.v)
 
             # Display control error.
             print('Control error: {:.3f}'.format(self.frenet.get_y_error()))
@@ -75,9 +81,11 @@ class Controller():
         """Stops/pauses the controller. """
         t = 0.5
 
-        self.pub.publish(self.vehicle_id, 0, 0)
+        self.pub_speed.publish(self.vehicle_id, 0)
+        self.pub_omega.publish(self.vehicle_id, 0)
         time.sleep(t)
-        self.pub.publish(self.vehicle_id, 0, 0)
+        self.pub_speed.publish(self.vehicle_id, 0)
+        self.pub_omega.publish(self.vehicle_id, 0)        
 
         if self.running:
             self.running = False
@@ -128,8 +136,10 @@ def main(args):
     position_topic_type = vehicleposition
 
     # Topic information for publishing vehicle commands.
-    control_topic_name = 'vehicle_control'
-    control_topic_type = vehiclecontrol
+    speed_topic_name = 'vehicle_speed'
+    speed_topic_type = vehiclespeed
+    omega_topic_name = 'vehicle_omega'
+    omega_topic_type = vehicleomega
 
     # Data for controller reference path.
     x_radius = 1.7
@@ -146,8 +156,9 @@ def main(args):
 
     # Initialize controller.
     controller = Controller(
-        position_topic_type, position_topic_name, control_topic_type,
-        control_topic_name, vehicle_id, node_name,
+        position_topic_type, position_topic_name,
+        speed_topic_type, speed_topic_name,
+        omega_topic_type, omega_topic_name, vehicle_id, node_name,
         v = v, k_p = k_p, k_i = k_i, k_d = k_d)
 
     # Set reference path.
