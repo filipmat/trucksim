@@ -50,7 +50,7 @@ class Controller():
         x = data.x
         y = data.y
         theta = data.theta
-        vel = 1             # Placeholder for actual velocity of vehicle.
+        vel = data.v
 
         # Perform control if the vehicle ID is the same as in the controller.
         if vehicle_id == self.vehicle_id:

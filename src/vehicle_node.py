@@ -62,7 +62,7 @@ class VehicleNode(vehicle.Vehicle):
             self.move(self.delta_t)
 
             self.pub.publish(
-                rospy.get_name(), self.x[0], self.x[1], self.x[2])
+                rospy.get_name(), self.x[0], self.x[1], self.x[2], self.u[0])
 
             self.r.sleep()
 
