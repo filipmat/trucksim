@@ -74,8 +74,10 @@ class VehicleNode(vehicle.Vehicle):
         while not rospy.is_shutdown():
             self.move(self.delta_t)
 
+            vel = self._get_velocity()
+
             self.pub.publish(
-                rospy.get_name(), self.x[0], self.x[1], self.x[2], self.u[0])
+                rospy.get_name(), self.x[0], self.x[1], self.x[2], vel)
 
             self.r.sleep()
 
