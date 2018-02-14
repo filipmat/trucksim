@@ -20,7 +20,7 @@ import path
 class TruckPlot():
     """Class for GUI that plots the truck trajectories. """
     def __init__(self, root, node_name, topic_type, topic_name,
-        filename = 'record', width = 5, height = 5, win_size = 600,  clear_seconds = 60, inactivity_time_limit = 20):
+        filename = 'record', width = 5, height = 5, win_size = 600,  clear_seconds = 180, inactivity_time_limit = 20):
         """
         Parameters
         filename: string, prefix for saved files.
@@ -102,10 +102,12 @@ class TruckPlot():
         self.canv.pack(in_ = canv_frame)
         self.canv.bind('<Button-1>', self._left_click)
 
-        # Available colors for the vehicles.
+        # Available colors to be used by the vehicles.
         self.available_colors = ['blue', 'green', 'yellow', 'orange', 'red',
             'pink', 'purple', 'cyan', 'dark green', 'coral', 'purple4',
             'brown1']
+        # Currently colors that are free to be used.
+        self.free_colors = self.available_colors[:]
 
         # Create frame next to the canvas for buttons, labels etc.
         right_frame = tk.Frame(self.root, background = bg_color)
@@ -122,8 +124,8 @@ class TruckPlot():
 
         # Create frame for recording widgets.
         record_frame = tk.Frame(self.root, background = bg_color)
-        record_frame.pack(in_ = right_frame, side = tk.TOP,
-                            anchor = tk.N, pady = (0, 2*ypad))
+        #record_frame.pack(in_ = right_frame, side = tk.TOP,
+        #                    anchor = tk.N, pady = (0, 2*ypad))
 
         path_frame = tk.Frame(self.root, background = bg_color)
         path_frame.pack(in_ = right_frame, side = tk.TOP, pady = (0, 2*ypad))
@@ -160,8 +162,7 @@ class TruckPlot():
         # Buttons for recording trajectories.
         self.start_record_button = tk.Button(
             self.root, text = 'Start new\nrecording',
-            command = self._start_record, width = w1, height = 2,
-            state = tk.DISABLED)
+            command = self._start_record, width = w1, height = 2)
         self.start_record_button.pack(in_ = record_frame)
         self.stop_record_button = tk.Button(self.root, text = 'Stop\nrecording',
             command = self._stop_record, width = w1, height = 2,
@@ -331,7 +332,7 @@ class TruckPlot():
 
         # Create triangle.
         self.vehicles[vehicle_id] = self.canv.create_polygon(
-            xf, yf, xr, yr, xl, yl, fill = color)
+            xf, yf, xr, yr, xl, yl, fill = color, outline = 'black')
 
         self.vehicle_colors[vehicle_id] = color # Store vehicle color.
 
@@ -340,7 +341,16 @@ class TruckPlot():
 
     def _get_random_color(self):
         """Returns a random color from the list of available colors. """
-        color = random.choice(self.available_colors)
+        sr = random.SystemRandom()
+        color = sr.choice(self.free_colors)
+        index = self.free_colors.index(color)
+
+        self.free_colors = [
+            c for i, c in enumerate(self.free_colors) if i != index]
+
+        if len(self.free_colors) == 0:
+            self.free_colors = self.available_colors[:]
+
         return color
 
 
@@ -404,6 +414,12 @@ class TruckPlot():
         del self.vehicle_colors[vehicle_id]
         del self.old_positions[vehicle_id]
         del self.last_published_time[vehicle_id]
+
+
+    def _raise_vehicles(self):
+        """Raises all vehicle objects to the top of the canvas. """
+        for vehicle_id in self.vehicles:
+            self.canv.tag_raise(self.vehicles[vehicle_id])
 
 
     def _draw_coordinate_frame(self):
@@ -531,6 +547,7 @@ class TruckPlot():
             self.display_path = True
             self._draw_path()
             self.clear_button.config(state = 'normal')
+            self._raise_vehicles()
         else:
             self.display_path = False
             self.canv.delete(self.PATH_TAG)

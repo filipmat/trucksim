@@ -4,39 +4,51 @@ import math
 import time
 
 class Vehicle(object):
-    """Class representing a point mass vehicle. """
+    """Class representing a unicycle vehicle. """
     def __init__(self, x = [0, 0, 0], u = [0, 0]):
-        self.x = x
-        self.u = u
+        self.x = x  # Vehicle state.
+        self.u = u  # Vehicle input.
+
+        # Variables used for velocity calculation.
+        self.delta_t = 0        # Stores the update interval.
+        self.last_x = self.x[:] # Stores the last state.
+        self.v = 0              # Vehicle velocity. 
 
         self.last_time = time.time()
         self.last_x = self.x
 
 
     def move(self, delta_t, u = None):
-        """Moves the vehicle. The vehicle moves as a point mass. If the input
+        """Moves the vehicle. The vehicle moves as a unicycle. If the input
         u is not specified it will use the previous input. """
         if u is not None:
             self.set_input(u)
 
+        # Save information for velocity calculation.
         self.last_x = self.x[:]
+        self.delta_t = delta_t
 
+        # Move the vehicle according to the dynamics.
         self.x[0] = self.x[0] + delta_t*self.u[0]*math.cos(self.x[2])
         self.x[1] = self.x[1] + delta_t*self.u[0]*math.sin(self.x[2])
         self.x[2] = (self.x[2] + delta_t*self.u[1]) % (2*math.pi)
 
 
-    def _get_velocity(self):
-        current_time = time.time()
-        elapsed_time = current_time - self.last_time
-        self.last_time = current_time
-
+    def get_velocity(self):
+        """Returns the velocity of the vehicle. The velocity is calculated
+        using the distance traveled from the last position and the elapsed time
+        from the last movement. The elapsed time is the update interval. """
         distance = math.sqrt(
             (self.x[0] - self.last_x[0])**2 + (self.x[1] - self.last_x[1])**2)
 
-        vel = distance/elapsed_time
+        # Calculate the velocity. If the latest update interval equals to zero
+        # the previous velocity is used.
+        try:
+            self.v = distance/self.delta_t
+        except ZeroDivisionError:
+            pass
 
-        return vel
+        return self.v
 
 
     def get_state(self):
