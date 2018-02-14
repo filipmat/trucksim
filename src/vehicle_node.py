@@ -15,36 +15,35 @@ class VehicleNode(vehicle.Vehicle):
     """Class for simulating the movement of a vehicle. The vehicle is identified
     with the name of the ROS node. """
 
-    def __init__(self, x = [0, 0, 0], u = [0, 0], frequency = 20,
-        name = None):
+    def __init__(self, x = [0, 0, 0], u = [0, 0], frequency = 20, name = None,
+        position_topic_name = 'vehicle_position',
+        position_topic_type = vehicleposition,
+        speed_topic_name = 'vehicle_speed', speed_topic_type = vehiclespeed,
+        omega_topic_name = 'vehicle_omega', omega_topic_type = vehicleomega):
 
         # Node and topic names and types.
-        DEFAULT_NAME = 'vehicle'
-        SPEED_TOPIC_NAME = 'vehicle_speed'
-        OMEGA_TOPIC_NAME = 'vehicle_omega'
-        POSITION_TOPIC_NAME = 'vehicle_position'
-        SPEED_TOPIC_TYPE = vehiclespeed
-        OMEGA_TOPIC_TYPE = vehicleomega
-        POSITION_TOPIC_TYPE = vehicleposition
+        DEFAULT_NODE_NAME = 'vehicle'
 
         # Initialize superclass.
         super(VehicleNode, self).__init__(x, u)
 
-        # Subscriber for receiving control inputs.
-        rospy.Subscriber(SPEED_TOPIC_NAME, SPEED_TOPIC_TYPE,
+        # Subscriber for receiving speed control signal.
+        rospy.Subscriber(speed_topic_name, speed_topic_type,
             self._speed_callback)
-        rospy.Subscriber(OMEGA_TOPIC_NAME, OMEGA_TOPIC_TYPE,
+
+        # Subscriber for receiving omega control signal.
+        rospy.Subscriber(omega_topic_name, omega_topic_type,
             self._omega_callback)
 
-        # Publisher for publishing vehicle position.
+        # Publisher for publishing vehicle position and velocity.
         self.pub = rospy.Publisher(
-            POSITION_TOPIC_NAME, POSITION_TOPIC_TYPE, queue_size = 10)
+            position_topic_name, position_topic_type, queue_size = 10)
 
         # Initialize ROS node.
         if name is not None:
             rospy.init_node(name, anonymous = False)
         else:
-            rospy.init_node(DEFAULT_NAME, anonymous = True)
+            rospy.init_node(DEFAULT_NODE_NAME, anonymous = True)
 
         # ROS update rate.
         self.r = rospy.Rate(frequency)
@@ -59,14 +58,14 @@ class VehicleNode(vehicle.Vehicle):
         """Method called when subscriber receives data. Updates the input if the
         published ID is the same as the ID of the node. """
         if data.id == rospy.get_name():
-            self.set_speed(data.speed)
+            self.u[0] = data.speed
 
 
     def _omega_callback(self, data):
         """Method called when subscriber receives data. Updates the input if the
         published ID is the same as the ID of the node. """
         if data.id == rospy.get_name():
-            self.set_omega(data.omega)
+            self.u[1] = data.omega
 
 
     def run(self):
@@ -74,7 +73,7 @@ class VehicleNode(vehicle.Vehicle):
         while not rospy.is_shutdown():
             self.move(self.delta_t)
 
-            vel = self._get_velocity()
+            vel = self.get_velocity()
 
             self.pub.publish(
                 rospy.get_name(), self.x[0], self.x[1], self.x[2], vel)
@@ -88,6 +87,9 @@ class VehicleNode(vehicle.Vehicle):
 
 
 def main(args):
+    """Creates a vehicle node and starts the simulation. The name of the vehicle
+    is entered as an argument on the command line. If a name is not entered it is given the default name with a random unique number at the end. The
+    vehicle is initialized at the origin pointing to the left. """
     if len(args) > 1:
         vn = VehicleNode([0, 0, math.pi], [0., 0.], name = args[1])
     else:

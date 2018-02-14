@@ -20,7 +20,7 @@ import path
 class TruckPlot():
     """Class for GUI that plots the truck trajectories. """
     def __init__(self, root, node_name, topic_type, topic_name,
-        filename = 'record', width = 5, height = 5, win_size = 600,  clear_seconds = 60, inactivity_time_limit = 20):
+        filename = 'record', width = 5, height = 5, win_size = 600,  clear_seconds = 180, inactivity_time_limit = 20):
         """
         Parameters
         filename: string, prefix for saved files.
@@ -124,8 +124,8 @@ class TruckPlot():
 
         # Create frame for recording widgets.
         record_frame = tk.Frame(self.root, background = bg_color)
-        record_frame.pack(in_ = right_frame, side = tk.TOP,
-                            anchor = tk.N, pady = (0, 2*ypad))
+        #record_frame.pack(in_ = right_frame, side = tk.TOP,
+        #                    anchor = tk.N, pady = (0, 2*ypad))
 
         path_frame = tk.Frame(self.root, background = bg_color)
         path_frame.pack(in_ = right_frame, side = tk.TOP, pady = (0, 2*ypad))
@@ -162,8 +162,7 @@ class TruckPlot():
         # Buttons for recording trajectories.
         self.start_record_button = tk.Button(
             self.root, text = 'Start new\nrecording',
-            command = self._start_record, width = w1, height = 2,
-            state = tk.DISABLED)
+            command = self._start_record, width = w1, height = 2)
         self.start_record_button.pack(in_ = record_frame)
         self.stop_record_button = tk.Button(self.root, text = 'Stop\nrecording',
             command = self._stop_record, width = w1, height = 2,

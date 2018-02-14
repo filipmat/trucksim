@@ -145,19 +145,23 @@ class Controller():
         j = 0
         while not rospy.is_shutdown():
             if self.running:
+                # Track the path for each vehicle.
                 for i, vehicle_id in enumerate(self.vehicle_ids):
                     omega = self._get_omega(vehicle_id)
                     self.pub_omega.publish(vehicle_id, omega)
 
-                    # Start one vehicle at a time to give a small headstart.
-                    if j < self.headstart_samples*len(self.vehicle_ids):
-                        index = j/self.headstart_samples
-                        v_id = self.vehicle_ids[index]
-                        vel = self.v
-                        if v_id == vehicle_id:
-                            self.pub_speed.publish(vehicle_id, vel)
-                    # After start, do not publish speed to leader vehicle.
-                    elif i > 0:
+                # At the start of operation: start each vehicle with a constant
+                # speed one after another, delayed with a set amount of samples.
+                if j < self.headstart_samples*len(self.vehicle_ids):
+                    index = j/self.headstart_samples
+                    vehicle_id = self.vehicle_ids[index]
+
+                    self.pub_speed.publish(vehicle_id, self.v)
+
+                # Normal operation: only control the speeds of the follower
+                # vehicles. The velocities are obtained from the PIDs.
+                else:
+                    for i, vehicle_id in enumerate(self.vehicle_ids[1:]):
                         vel = self._get_vel(vehicle_id)
                         self.pub_speed.publish(vehicle_id, vel)
 
@@ -167,6 +171,7 @@ class Controller():
 
 
     def _get_omega(self, vehicle_id):
+        """Returns the control input omega for the specified vehicle. """
         pos = self.positions[vehicle_id]
         omega = self.frenets[vehicle_id].get_omega(
             pos[0], pos[1], pos[2], pos[3])
@@ -175,6 +180,9 @@ class Controller():
 
 
     def _get_vel(self, vehicle_id):
+        """Returns the velocity control signal for the given vehicle. Calculates
+        the distance error to the vehicle in front and gets the velocity from
+        the PID controller. """
         id1 = self.vehicle_ids[self.vehicle_ids.index(vehicle_id) - 1]
         pos1 = self.positions[id1]
         pos2 = self.positions[vehicle_id]
@@ -241,7 +249,6 @@ def main(args):
         sys.exit()
 
     vehicle_ids = args[1:]
-    print(vehicle_ids)
 
     # Name of ROS node.
     node_name = 'controller'
@@ -289,7 +296,6 @@ def main(args):
 
     # Start controller.
     controller.run()
-
 
 
 if __name__ == '__main__':
