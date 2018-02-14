@@ -14,6 +14,9 @@ class Vehicle(object):
         self.last_x = self.x[:] # Stores the last state.
         self.v = 0              # Vehicle velocity. 
 
+        self.last_time = time.time()
+        self.last_x = self.x
+
 
     def move(self, delta_t, u = None):
         """Moves the vehicle. The vehicle moves as a unicycle. If the input

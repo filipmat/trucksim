@@ -3,6 +3,7 @@
 import rospy
 import sys
 import math
+import time
 
 from trucksim.msg import vehiclespeed
 from trucksim.msg import vehicleomega
