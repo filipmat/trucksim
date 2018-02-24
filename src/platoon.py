@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import rospy
-import math
 import sys
 import time
 
@@ -12,18 +11,16 @@ import path
 import frenetpid
 
 
-
-class PID():
-    def __init__(self, k_p = 0, k_i = 0, k_d = 0):
+class PID(object):
+    def __init__(self, k_p=0., k_i=0., k_d=0.):
         # PID parameters.
         self.k_p = k_p
         self.k_i = k_i
         self.k_d = k_d
 
-        self.e = 0                  # Current error.
-        self.old_e = 0              # Previous error.
-        self.sum_e = 0              # Accumulated error.
-
+        self.e = 0  # Current error.
+        self.old_e = 0  # Previous error.
+        self.sum_e = 0  # Accumulated error.
 
     def get_u(self, e):
         """Calculate the control input omega. """
@@ -35,12 +32,11 @@ class PID():
         self.sum_e += e
 
         # PID controller.
-        u = - self.k_p*e - self.k_d*e_p - self.k_i * self.sum_e
+        u = - self.k_p * e - self.k_d * e_p - self.k_i * self.sum_e
 
         return u
 
-
-    def set_pid(self, kp = None, ki = None, kd = None):
+    def set_pid(self, kp=None, ki=None, kd=None):
         """Sets the PID parameters. """
         if kp is not None:
             self.k_p = kp
@@ -51,35 +47,32 @@ class PID():
 
         self.reset_sum()
 
-
     def get_pid(self):
         """Returns the PID parameters. """
         return self.k_p, self.k_i, self.k_d
 
-
     def reset_sum(self):
         """Resets the sum for I part in PID controller. """
         self.sum_e = 0
-
 
     def get_error(self):
         """Returns the latest y error. """
         return self.e
 
 
-
-class Controller():
+class Controller(object):
     """Class for subscribing to vehicle positions, calculate control input, and
     send commands to the vehicle. """
-    def __init__(self, position_topic_type, position_topic_name,
-        speed_topic_type, speed_topic_name,
-        omega_topic_type, omega_topic_name, vehicle_ids,
-        node_name = 'controller', v = 1, k_p = 0, k_i = 0, k_d = 0, rate = 20,
-        distance_offset = 0.4, e_ref = 0.5, k_pv = 0, k_iv = 0, k_dv = 0):
 
-        self.v = v                      # Desired velocity of the vehicle.
-        self.vehicle_ids = ['/' + v_id for v_id in vehicle_ids] # IDs.
-        self.running = False            # If controller is running or not.
+    def __init__(self, position_topic_type, position_topic_name,
+                 speed_topic_type, speed_topic_name,
+                 omega_topic_type, omega_topic_name, vehicle_ids,
+                 node_name='controller', v=1., k_p=0., k_i=0., k_d=0., rate=20,
+                 distance_offset=0.4, e_ref=0.5, k_pv=0., k_iv=0., k_dv=0.):
+
+        self.v = v  # Desired velocity of the vehicle.
+        self.vehicle_ids = ['/' + v_id for v_id in vehicle_ids]  # IDs.
+        self.running = False  # If controller is running or not.
         self.rate = rate
         self.distance_offset = distance_offset
         self.e_ref = e_ref
@@ -94,14 +87,14 @@ class Controller():
         self.headstart_samples = 10
 
         # Setup ROS node.
-        rospy.init_node(node_name, anonymous = True)
+        rospy.init_node(node_name, anonymous=True)
 
         # Publisher for controlling vehicle.
         self.pub_speed = rospy.Publisher(speed_topic_name, speed_topic_type,
-            queue_size = 1)
+                                         queue_size=1)
 
         self.pub_omega = rospy.Publisher(omega_topic_name, omega_topic_type,
-            queue_size = 1)
+                                         queue_size=1)
 
         # Subscriber for vehicle positions.
         rospy.Subscriber(
@@ -126,7 +119,6 @@ class Controller():
         print('\nController initialized. Vehicles {}.\n'.format(
             self.vehicle_ids))
 
-
     def _callback(self, data):
         """Called when the subscriber receives data. """
         # Retrieve data.
@@ -137,7 +129,6 @@ class Controller():
         vel = data.v
 
         self.positions[vehicle_id] = [x, y, theta, vel]
-
 
     def _control(self):
         """Perform control actions from received data. Sends new values to
@@ -152,8 +143,8 @@ class Controller():
 
                 # At the start of operation: start each vehicle with a constant
                 # speed one after another, delayed with a set amount of samples.
-                if j < self.headstart_samples*len(self.vehicle_ids):
-                    index = j/self.headstart_samples
+                if j < self.headstart_samples * len(self.vehicle_ids):
+                    index = j / self.headstart_samples
                     vehicle_id = self.vehicle_ids[index]
 
                     self.pub_speed.publish(vehicle_id, self.v)
@@ -165,10 +156,9 @@ class Controller():
                         vel = self._get_vel(vehicle_id)
                         self.pub_speed.publish(vehicle_id, vel)
 
-                time.sleep(1./self.rate)
+                time.sleep(1. / self.rate)
 
             j += 1
-
 
     def _get_omega(self, vehicle_id):
         """Returns the control input omega for the specified vehicle. """
@@ -177,7 +167,6 @@ class Controller():
             pos[0], pos[1], pos[2], pos[3])
 
         return omega
-
 
     def _get_vel(self, vehicle_id):
         """Returns the velocity control signal for the given vehicle. Calculates
@@ -199,7 +188,6 @@ class Controller():
 
         return vel
 
-
     def stop(self):
         """Stops/pauses the controller. """
         for vehicle_id in self.vehicle_ids:
@@ -208,7 +196,6 @@ class Controller():
         if self.running:
             self.running = False
             print('Controller stopped.\n')
-
 
     def start(self):
         """Starts the controller. """
@@ -219,11 +206,12 @@ class Controller():
             self.running = True
             print('Controller started.')
 
-
-    def set_reference_path(self, radius, center = [0, 0], pts = 400):
+    def set_reference_path(self, radius, center=None, pts=400):
         """Sets a new reference ellipse path. """
-        self.pt.gen_circle_path(radius, pts, center)
+        if center is None:
+            center = [0, 0]
 
+        self.pt.gen_circle_path(radius, pts, center)
 
     def run(self):
         """Runs the controller. """
@@ -231,11 +219,10 @@ class Controller():
         self._control()
         self.stop()
 
-
     def set_pid(self, kp, ki, kd):
         """Sets the PID parameters. """
-        self.frenet.set_pid(kp, ki, kd)
-
+        for vehicle_id in self.vehicle_ids:
+            self.frenets[vehicle_id].set_pid(kp, ki, kd)
 
     def set_speed(self, v):
         """Sets the vehicle speed. """
@@ -287,9 +274,9 @@ def main(args):
         position_topic_type, position_topic_name,
         speed_topic_type, speed_topic_name,
         omega_topic_type, omega_topic_name, vehicle_ids, node_name,
-        v = v, k_p = k_p, k_i = k_i, k_d = k_d,
-        k_pv = k_pv, k_iv = k_iv, k_dv = k_dv,
-        e_ref = e_ref, distance_offset = distance_offset)
+        v=v, k_p=k_p, k_i=k_i, k_d=k_d,
+        k_pv=k_pv, k_iv=k_iv, k_dv=k_dv,
+        e_ref=e_ref, distance_offset=distance_offset)
 
     # Set reference path.
     controller.set_reference_path([x_radius, y_radius], center)

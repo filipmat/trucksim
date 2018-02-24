@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import rospy
-import math
 import sys
 import time
 
@@ -11,22 +10,24 @@ from trucksim.msg import vehicleomega
 import path
 import frenetpid
 
-class Controller():
+
+class Controller(object):
     """Class for subscribing to vehicle positions, calculate control input, and
     send commands to the vehicle. """
+
     def __init__(self, position_topic_type, position_topic_name,
-        speed_topic_type, speed_topic_name,
-        omega_topic_type, omega_topic_name, vehicle_id,
-        node_name = 'controller', v = 1, k_p = 0, k_i = 0, k_d = 0):
+                 speed_topic_type, speed_topic_name,
+                 omega_topic_type, omega_topic_name, vehicle_id,
+                 node_name='controller', v=1., k_p=0., k_i=0., k_d=0.):
 
-        self.v = v                      # Desired velocity of the vehicle.
+        self.v = v  # Desired velocity of the vehicle.
 
-        self.vehicle_id = vehicle_id    # ID of the vehicle.
+        self.vehicle_id = vehicle_id  # ID of the vehicle.
 
-        self.running = False            # If controller is running or not.
+        self.running = False  # If controller is running or not.
 
         # Setup ROS node.
-        rospy.init_node(node_name, anonymous = True)
+        rospy.init_node(node_name, anonymous=True)
 
         # Subscriber for vehicle positions.
         rospy.Subscriber(
@@ -34,10 +35,10 @@ class Controller():
 
         # Publisher for controlling vehicle.
         self.pub_speed = rospy.Publisher(speed_topic_name, speed_topic_type,
-            queue_size = 1)
+                                         queue_size=1)
 
         self.pub_omega = rospy.Publisher(omega_topic_name, omega_topic_type,
-            queue_size = 1)
+                                         queue_size=1)
 
         # Create reference path object.
         self.pt = path.Path()
@@ -46,7 +47,6 @@ class Controller():
         self.frenet = frenetpid.FrenetPID(self.pt, k_p, k_i, k_d)
 
         print('\nController initialized. Truck {}.\n'.format(self.vehicle_id))
-
 
     def _callback(self, data):
         """Called when the subscriber receives data. """
@@ -60,7 +60,6 @@ class Controller():
         # Perform control if the vehicle ID is the same as in the controller.
         if vehicle_id == self.vehicle_id:
             self._control(x, y, theta, vel)
-
 
     def _control(self, x, y, theta, vel):
         """Perform control actions from received data. Sends new values to
@@ -76,7 +75,6 @@ class Controller():
             # Display control error.
             print('Control error: {:.3f}'.format(self.frenet.get_y_error()))
 
-
     def stop(self):
         """Stops/pauses the controller. """
         t = 0.5
@@ -85,12 +83,11 @@ class Controller():
         self.pub_omega.publish(self.vehicle_id, 0)
         time.sleep(t)
         self.pub_speed.publish(self.vehicle_id, 0)
-        self.pub_omega.publish(self.vehicle_id, 0)        
+        self.pub_omega.publish(self.vehicle_id, 0)
 
         if self.running:
             self.running = False
             print('Controller stopped.\n')
-
 
     def start(self):
         """Starts the controller. """
@@ -101,11 +98,12 @@ class Controller():
             self.running = True
             print('Controller started.')
 
-
-    def set_reference_path(self, radius, center = [0, 0], pts = 400):
+    def set_reference_path(self, radius, center=None, pts=400):
         """Sets a new reference ellipse path. """
-        self.pt.gen_circle_path(radius, pts, center)
+        if center is None:
+            center = [0, 0]
 
+        self.pt.gen_circle_path(radius, pts, center)
 
     def run(self):
         """Runs the controller. """
@@ -113,11 +111,9 @@ class Controller():
         rospy.spin()
         self.stop()
 
-
     def set_pid(self, kp, ki, kd):
         """Sets the PID parameters. """
         self.frenet.set_pid(kp, ki, kd)
-
 
     def set_speed(self, v):
         """Sets the vehicle speed. """
@@ -159,14 +155,13 @@ def main(args):
         position_topic_type, position_topic_name,
         speed_topic_type, speed_topic_name,
         omega_topic_type, omega_topic_name, vehicle_id, node_name,
-        v = v, k_p = k_p, k_i = k_i, k_d = k_d)
+        v=v, k_p=k_p, k_i=k_i, k_d=k_d)
 
     # Set reference path.
     controller.set_reference_path([x_radius, y_radius], center)
 
     # Start controller.
     controller.run()
-
 
 
 if __name__ == '__main__':
