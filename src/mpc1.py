@@ -14,9 +14,13 @@ class MPC(object):
         x_max = numpy.array([3, 2*v_value*horizon])
         u_min = numpy.array([-2])
         u_max = numpy.array([2])
+        P = numpy.matrix([[1, 0], [0, 1]])
 
         self.A = numpy.matrix([[1, 0], [delta_t, 1]])
         self.B = numpy.matrix([delta_t, 0])
+
+        self.xdim = self.A.shape[0]
+        self.udim = self.A.shape[0]
 
         self.horizon = horizon
         self.delta_t = delta_t
@@ -32,6 +36,11 @@ class MPC(object):
         self.x_max = x_max
 
 
+
+        self.z = cvxpy.Variable(horizon*(self.xdim + self.udim))
+
+        #cost = cvxpy.quad_form(self.z, P)
+        #objective = cvxpy.Minimize(cost)
 
 
 
