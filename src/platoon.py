@@ -68,7 +68,8 @@ class Controller(object):
                  speed_topic_type, speed_topic_name,
                  omega_topic_type, omega_topic_name, vehicle_ids,
                  node_name='controller', v=1., k_p=0., k_i=0., k_d=0., rate=20,
-                 distance_offset=0.4, e_ref=0.5, k_pv=0., k_iv=0., k_dv=0.):
+                 distance_offset=0.4, e_ref=0.5, k_pv=0., k_iv=0., k_dv=0.,
+                 vmax = 40):
 
         self.v = v  # Desired velocity of the vehicle.
         self.vehicle_ids = ['/' + v_id for v_id in vehicle_ids]  # IDs.
@@ -82,7 +83,7 @@ class Controller(object):
         self.k_dv = k_dv
 
         self.vmin = 0
-        self.vmax = 4
+        self.vmax = vmax
 
         self.headstart_samples = 10
 
@@ -140,6 +141,9 @@ class Controller(object):
                 for i, vehicle_id in enumerate(self.vehicle_ids):
                     omega = self._get_omega(vehicle_id)
                     self.pub_omega.publish(vehicle_id, omega)
+                    if i == 0:
+                        print('{:.1f}'.format(
+                            self.frenets[vehicle_id].get_y_error()))
 
                 # At the start of operation: start each vehicle with a constant
                 # speed one after another, delayed with a set amount of samples.
@@ -250,24 +254,35 @@ def main(args):
     omega_topic_name = 'vehicle_omega'
     omega_topic_type = vehicleomega
 
+    scale = 1
+
     # Data for controller reference path.
-    x_radius = 1.7
-    y_radius = 1.2
-    center = [0.3, -1.3]
+    x_radius = 1.7*scale
+    y_radius = 1.2*scale
+    center = [0, -y_radius]
 
     # Constant velocity of lead vehicle.
-    v = 1.25
+    v = 1*scale
 
     # PID parameters.
-    k_p = 0.5
-    k_i = -0.02
-    k_d = 3
+    # 0.0001
+    k_p = 0.00003
+    k_i = -0.02*0
+    k_d = 0.020
+
+    if scale == 1:
+        k_p = 0.5
+        k_i = 0
+        k_d = 3
 
     k_pv = 2
     k_iv = 0.1
     k_dv = 1
-    e_ref = 0.3
-    distance_offset = 0.2
+    e_ref = 10
+    distance_offset = 10
+
+    rate = 20
+    vmax = 200
 
     # Initialize controller.
     controller = Controller(
@@ -276,10 +291,10 @@ def main(args):
         omega_topic_type, omega_topic_name, vehicle_ids, node_name,
         v=v, k_p=k_p, k_i=k_i, k_d=k_d,
         k_pv=k_pv, k_iv=k_iv, k_dv=k_dv,
-        e_ref=e_ref, distance_offset=distance_offset)
+        e_ref=e_ref, distance_offset=distance_offset, rate=rate, vmax=vmax)
 
     # Set reference path.
-    controller.set_reference_path([x_radius, y_radius], center)
+    controller.set_reference_path([x_radius, y_radius], center, pts=400)
 
     # Start controller.
     controller.run()
