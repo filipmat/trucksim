@@ -23,7 +23,7 @@ class TruckPlot(object):
     # noinspection PyPep8
     def __init__(self, root, node_name, topic_type, topic_name,
                  filename='record', width=5, height=5, win_size=600,
-                 clear_seconds=180, inactivity_time_limit=20):
+                 clear_seconds=180, inactivity_time_limit=20, truckl = 0.4):
         """
         Parameters
         filename: string, prefix for saved files.
@@ -85,8 +85,11 @@ class TruckPlot(object):
         bg_color = 'SlateGray2'
         w1 = 15
         ypad = 10
-        self.truckl = 0.27  # Real vehicle length.
-        self.truckw = 0.15
+        self.truckl = truckl  # Real vehicle length.
+        self.truckw = truckl/2
+        self.cftag = 'cf'
+        self.zoom_scale = 1.25
+        self.truck_zoom_scale = 1.25
 
         # Setup subscriber node.
         rospy.init_node(self.node_name, anonymous=True)
@@ -131,6 +134,7 @@ class TruckPlot(object):
         # record_frame.pack(in_ = right_frame, side = tk.TOP,
         #                    anchor = tk.N, pady = (0, 2*ypad))
 
+        # Create frame for changing reference path.
         path_frame = Tk.Frame(self.root, background=bg_color)
         path_frame.pack(in_=right_frame, side=Tk.TOP, pady=(0, 2 * ypad))
 
@@ -242,6 +246,32 @@ class TruckPlot(object):
         self.time_text_var.set('')
         self.time_label.pack(in_=bottom_frame)
 
+        # Buttons for zooming the area.
+        zoom_frame = Tk.Frame(self.root, background=bg_color)
+        zoom_frame.pack(in_=bottom_frame, side=Tk.TOP, anchor=Tk.N,
+                          pady=(2 * ypad, 0))
+        zoom_in_button = Tk.Button(self.root,
+                                   text='+',
+                                   command = self._zoom_in)
+        zoom_out_button = Tk.Button(self.root,
+                                   text='-',
+                                   command=self._zoom_out)
+        zoom_out_button.pack(in_=zoom_frame, side=Tk.LEFT)
+        zoom_in_button.pack(in_=zoom_frame, side=Tk.LEFT)
+
+        # Buttons for truck size.
+        truck_size_frame = Tk.Frame(self.root, background=bg_color)
+        truck_size_frame.pack(in_=bottom_frame, side=Tk.TOP, anchor=Tk.N,
+                              pady=(ypad, 0))
+        enlarge_trucks_button = Tk.Button(self.root,
+                                         text='+',
+                                         command=self._enlarge_trucks)
+        reduce_trucks_button = Tk.Button(self.root,
+                                         text='-',
+                                         command=self._reduce_trucks)
+        reduce_trucks_button.pack(in_=truck_size_frame, side = Tk.LEFT)
+        enlarge_trucks_button.pack(in_=truck_size_frame, side = Tk.LEFT)
+
         # Actions for closing the window and pressing ctrl-C on the window.
         self.root.protocol('WM_DELETE_WINDOW', self._quit1)
         self.root.bind('<Control-c>', self._quit2)
@@ -264,6 +294,38 @@ class TruckPlot(object):
         lbl.pack(in_=frame, side=Tk.LEFT)
         entry = Tk.Entry(self.root, width=9, **options)
         entry.pack(in_=frame, side=Tk.LEFT)
+
+    def _set_area_size(self, width=None, height=None):
+        """Sets the width and height of the drawable area in meters. """
+        if width is not None:
+            self.width = width
+        if height is not None:
+            self.height = height
+
+        self._draw_coordinate_frame()
+        self._clear_trajectories()
+        self._draw_path()
+
+    def _zoom_in(self):
+        """Zooms in on the canvas. """
+        self._set_area_size(
+            self.width/self.zoom_scale, self.height/self.zoom_scale)
+
+    def _zoom_out(self):
+        """Zooms out on the canvas. """
+        self._set_area_size(
+            self.width*self.zoom_scale, self.height*self.zoom_scale)
+
+    def _enlarge_trucks(self):
+        """Makes the trucks bigger. """
+        self.truckl = self.truckl * self.truck_zoom_scale
+        self.truckw = self.truckw * self.truck_zoom_scale
+
+    def _reduce_trucks(self):
+        """Makes the trucks smaller. """
+        self.truckl = self.truckl / self.truck_zoom_scale
+        self.truckw = self.truckw / self.truck_zoom_scale
+
 
     def _apply_path(self):
         """Apply changes made to the reference path in the entry widgets. """
@@ -422,16 +484,17 @@ class TruckPlot(object):
     def _draw_coordinate_frame(self):
         """Draw lines for the origin and create text displaying the coordinates
         in the corners. """
-        cftag = 'cf'
+        self.canv.delete(self.cftag)
+
         # Create origin coordinate arrows.
         self.canv.create_line(int(self.win_width / 2), int(self.win_height / 2),
                               int(self.win_width / 2),
                               int(self.win_height / 2) - 50,
-                              width=2, arrow='last', tag=cftag)
+                              width=2, arrow='last', tag=self.cftag)
         self.canv.create_line(int(self.win_width / 2), int(self.win_height / 2),
                               int(self.win_width / 2) + 50,
                               int(self.win_height / 2),
-                              width=2, arrow='last', tag=cftag)
+                              width=2, arrow='last', tag=self.cftag)
 
         # Add coordinates to the corners.
         d = 6
@@ -439,25 +502,25 @@ class TruckPlot(object):
             d, d,
             text='({:.1f}, {:.1f})'.format(
                 -self.width / 2, self.height / 2),
-            anchor='nw', tag=cftag)
+            anchor='nw', tag=self.cftag)
 
         self.canv.create_text(
             d, self.win_height - d,
             text='({:.1f}, {:.1f})'.format(
                 -self.width / 2, -self.height / 2),
-            anchor='sw', tag=cftag)
+            anchor='sw', tag=self.cftag)
 
         self.canv.create_text(
             self.win_width - d, self.win_height - d,
             text='({:.1f}, {:.1f})'.format(
                 self.width / 2, -self.height / 2),
-            anchor='se', tag=cftag)
+            anchor='se', tag=self.cftag)
 
         self.canv.create_text(
             self.win_width - d, d,
             text='({:.1f}, {:.1f})'.format(
                 self.width / 2, self.height / 2),
-            anchor='ne', tag=cftag)
+            anchor='ne', tag=self.cftag)
 
     def _draw_closest_point(self, xy, clr='blue'):
         """Draw the closest point on the path for coordinates xy. """
@@ -539,13 +602,12 @@ class TruckPlot(object):
             self._show_canvas_tag(vehicle_id)
 
     def _path_btn_callback(self):
-        """Callback for path check button. Enable/disaple plotting of
+        """Callback for path check button. Enable/disable plotting of
         reference path. """
         if self.path_button_var.get() == 1:
             self.display_path = True
             self._draw_path()
             self.clear_button.config(state='normal')
-            self._raise_vehicles()
         else:
             self.display_path = False
             self.canv.delete(self.PATH_TAG)
@@ -688,9 +750,12 @@ class TruckPlot(object):
 
     def _draw_path(self):
         """Draws the reference path. """
+        self.canv.delete(self.PATH_TAG)
         if self.display_path:
             self._plot_sequence(self.pt.path, join=True, tag=self.PATH_TAG,
                                 clr=self.PATH_COLOR, width=2)
+            self._raise_vehicles()
+
 
     def load_path(self, filename):
         """Loads a path from a file. """
@@ -733,15 +798,15 @@ def main():
 
     width = 6  # Width in meters of displayed area.
     height = 6  # Height in meters.
-    x_radius = 1.7  # Ellipse x-radius.
-    y_radius = 1.2  # Ellipse y-radius.
-    center = [0.3, -1.3]  # The coordinates of the center of the ellipse.
+    x_radius = 1.70  # Ellipse x-radius.
+    y_radius = 1.20  # Ellipse y-radius.
+    center = [0, -y_radius]  # The coordinates of the center of the ellipse.
     pts = 200  # Number of points on displayed reference path.
 
     root = Tk.Tk()
     try:
         truckplot = TruckPlot(root, node_name, topic_type, topic_name,
-                              width=width, height=height)
+                              width=width, height=height, truckl=0.5)
 
         truckplot.gen_circle_path([x_radius, y_radius], pts, center=center)
 
