@@ -1,5 +1,6 @@
 import numpy
 import scipy.sparse as sparse
+import cvxpy
 
 import speed
 
@@ -15,13 +16,7 @@ position of the leader vehicle at the current time instant.
 """
 
 
-class MPC(object):
-
-    def __init__(self):
-        pass
-
-
-class Truck(object):
+class TruckMPC(object):
 
     def __init__(self, delta_t, horizon):
         self.dt = delta_t
@@ -39,7 +34,14 @@ class Truck(object):
         self.preceding_pos = numpy.zeros(self.h*2)
         self.preceding_vel = numpy.zeros(self.h*2)
 
-        self.x0 = 0
+        self.truck_length = 0.5
+        self.safety_distance = 0.2
+        self.xmin = numpy.array([0, 0])
+        self.xmax = numpy.array([3, numpy.inf])
+        self.umin = numpy.array([0])
+        self.umax = numpy.array([1])
+
+        self.x0 = numpy.array([0, 0])
         self.zeta = 0.5
         self.Q = numpy.eye(2)
         self.R = numpy.array([1])*0.1
@@ -50,6 +52,29 @@ class Truck(object):
         self.uref = numpy.zeros(self.h*self.nu)
         self.xgapref = numpy.zeros(self.h*self.nx)
         self.xngapref = numpy.zeros(2)
+
+        a_dyn, upper_dyn, lower_dyn = self.get_dynamics_constraints()
+        a_st, upper_st, lower_st = self.get_state_constraints()
+        a_acc, upper_acc, lower_acc = self.get_acceleration_constraints()
+        a_saf, upper_saf, lower_saf = self.get_safety_constraints(
+            numpy.zeros(self.h))
+
+        p_ref, q_ref = self.get_reference_cost_matrices()
+        p_gap, q_gap = self.get_timegap_cost_matrices()
+
+        z = cvxpy.Variable((self.h + 1)*self.nx + self.h*self.nu)
+        cost = 0.5 * cvxpy.quad_form(z, p_ref + p_gap) + (q_ref + q_gap) * z
+        objective = cvxpy.Minimize(cost)
+        constraints = [a_dyn * z <= upper_dyn,
+                       a_dyn * z >= lower_dyn,
+                       a_st * z <= upper_st,
+                       a_st * z >= lower_st,
+                       a_acc * z <= upper_acc,
+                       a_acc * z >= lower_acc,
+                       a_saf * z <= upper_saf,
+                       a_saf * z >= lower_saf]
+        prob = cvxpy.Problem(objective, constraints)
+        optimal = prob.solve()
 
     def compute_references(self, s0, v_opt):
         """Computes the different reference signals. """
@@ -94,30 +119,40 @@ class Truck(object):
 
         return matrix, lower, upper
 
-    def get_state_constraints(self, xmin, xmax):
+    def get_state_constraints(self):
         """Returns the constraints corresponding to the speed and position
         limits. """
         left = sparse.eye((self.h + 1) * self.nx)
         right = sparse.csc_matrix(((self.h + 1)*self.nx, self.h*self.nu))
         matrix = sparse.hstack([left, right])
 
-        upper = numpy.tile(xmax, self.h + 1)
-        lower = numpy.tile(xmin, self.h + 1)
+        upper = numpy.tile(self.xmax, self.h + 1)
+        lower = numpy.tile(self.xmin, self.h + 1)
 
         return matrix, upper, lower
 
-    def get_safety_constraints(self):
-        """Returns the constraints corresponding to safety distance. """
-        pass
-
-    def get_acceleration_constraints(self, umin, umax):
+    def get_acceleration_constraints(self):
         """Returns the constraints corresponding to the acceleration limits. """
         left = sparse.csc_matrix((self.h*self.nu, (self.h + 1)*self.nx))
         right = sparse.eye(self.h*self.nu)
         matrix = sparse.hstack([left, right])
 
-        upper = numpy.tile(umax, self.h)
-        lower = numpy.tile(umin, self.h)
+        upper = numpy.tile(self.umax, self.h)
+        lower = numpy.tile(self.umin, self.h)
+
+        return matrix, upper, lower
+
+    def get_safety_constraints(self, pos):
+        """Returns the constraints corresponding to safety distance.
+        pos is the assumed positions of the preceding vehicle. Length h. """
+        a = numpy.array([0, 0, 0, 1]).reshape(2, 2)
+        left = sparse.kron(sparse.eye(self.h), a)
+        right = sparse.csc_matrix((self.h*self.nx, self.h*self.nu))
+        matrix = sparse.hstack([left, right])
+
+        upper = numpy.vstack([numpy.ones(self.h)*numpy.inf, pos]).reshape(
+            (-1,), order='F')
+        lower = numpy.zeros(2*self.h)
 
         return matrix, upper, lower
 
@@ -132,7 +167,7 @@ class Truck(object):
 
         q_vector = numpy.hstack([
             numpy.kron(numpy.eye(self.h), -self.Q).dot(self.xref),
-            numpy.array([-self.QN.dot(self.xnref)]),
+            -self.QN.dot(self.xnref),
             numpy.kron(numpy.eye(self.h), -self.R).dot(self.uref)
         ])
 
@@ -148,11 +183,12 @@ class Truck(object):
 
         q_vector = numpy.hstack([
             numpy.kron(numpy.eye(self.h), -self.zeta*self.Q).dot(self.xgapref),
-            numpy.array([-self.zeta*self.QN.dot(self.xngapref)]),
+            -self.zeta*self.QN.dot(self.xngapref),
             numpy.zeros(self.h*self.nu)
         ])
 
-        return p_matrix
+        return p_matrix, q_vector
+
 
 def main():
     pos = [0., 1., 2.1, 3.4, 0.5]
@@ -160,7 +196,7 @@ def main():
 
     vopt = speed.Speed(pos, vel)
 
-    tr = Truck(0.5, 6)
+    tr = TruckMPC(0.5, 6)
     tr.compute_references(2, vopt)
 
 
