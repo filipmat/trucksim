@@ -32,6 +32,8 @@ class TruckMPC(object):
 
         self.inf = 1000000
 
+        self.is_leader = False
+
         if xmin is None:
             self.xmin = -self.inf*numpy.ones(self.nx)  # No min state limit.
         else:
@@ -79,18 +81,28 @@ class TruckMPC(object):
 
         self.z = cvxpy.Variable((self.h + 1)*self.nx + self.h*self.nu)
 
-    def compute_optimal_trajectories(self, x0, preceding_x, vopt):
+    def set_leader(self, is_leader):
+        self.is_leader = is_leader
+
+    def set_new_x0(self, x0):
+        """Sets the current initial value. The positions of previous saved
+        states are shifted. """
+        self.x0 = x0
+        self.assumed_x[:self.h * self.nx] = self.assumed_x[
+                                            self.nx:(self.h + 1) * self.nx]
+
+    def compute_optimal_trajectories(self, vopt, preceding_x=None):
         """Computes the optimal trajectories using MPC and updates the vehicle
         assumed state. """
-        self.update_mpc(x0, preceding_x, vopt)
+        self.update_mpc(vopt, preceding_x)
         self.solve_mpc()
         self.update_assumed_state()
 
-    def update_mpc(self, x0, preceding_x, vopt):
+    def update_mpc(self, vopt, preceding_x):
         """Updates the MPC problem with the new initial position, optimal
         speed trajectory and preceding vehicle trajectory. """
-        self.x0 = x0
-        self.preceding_x = preceding_x
+        if preceding_x is not None:
+            self.preceding_x = preceding_x
         self.compute_references(self.x0[1], vopt)
 
     def solve_mpc(self):
@@ -108,8 +120,6 @@ class TruckMPC(object):
         """Updates the assumed state. The length is two horizons. The first part
         are the previous states, the second part starts with the current state
         and then contains the optimal state from the MPC solution. """
-        self.assumed_x[:self.h*self.nx] = self.assumed_x[
-                                          self.nx:(self.h + 1)*self.nx]
         try:
             self.assumed_x[self.h*self.nx:] = \
                 self.z.value[:self.h*self.nx].flatten()
@@ -127,12 +137,16 @@ class TruckMPC(object):
 
     def get_mpc_cost(self):
         """Returns the cost for the MPC problem. The cost is the combined cost
-        for tracking reference, timegap and input trajectories. """
+        for tracking reference, timegap and input trajectories. If the vehicle
+        is the leader the timegap tracking cost is excluded. """
         p_ref, q_ref = self.get_reference_cost_matrices()
-        p_gap, q_gap = self.get_timegap_cost_matrices()
 
-        cost = 0.5 * cvxpy.quad_form(self.z, p_ref + p_gap) + \
-               (q_ref + q_gap) * self.z
+        if self.is_leader:
+            cost = 0.5 * cvxpy.quad_form(self.z, p_ref) + q_ref * self.z
+        else:
+            p_gap, q_gap = self.get_timegap_cost_matrices()
+            cost = 0.5 * cvxpy.quad_form(self.z, p_ref + p_gap) + \
+                   (q_ref + q_gap) * self.z
 
         return cost
 
@@ -141,17 +155,19 @@ class TruckMPC(object):
         a_dyn, upper_dyn, lower_dyn = self.get_dynamics_constraints()
         a_st, upper_st, lower_st = self.get_state_constraints()
         a_acc, upper_acc, lower_acc = self.get_acceleration_constraints()
-        a_saf, upper_saf, lower_saf = self.get_safety_constraints()
 
         constraints = [a_dyn * self.z <= upper_dyn,
                        a_dyn * self.z >= lower_dyn,
                        a_st * self.z <= upper_st,
                        a_st * self.z >= lower_st,
                        a_acc * self.z <= upper_acc,
-                       a_acc * self.z >= lower_acc,
-                       a_saf * self.z <= upper_saf,
-                       a_saf * self.z >= lower_saf,
-                       ]
+                       a_acc * self.z >= lower_acc]
+
+        if not self.is_leader: # Add safety constraint if not leader.
+            a_saf, upper_saf, lower_saf = self.get_safety_constraints()
+
+            constraints = constraints + [a_saf * self.z <= upper_saf,
+                                         a_saf * self.z >= lower_saf]
 
         return constraints
 
@@ -340,7 +356,8 @@ def main():
                   safety_distance, timegap, x0=x0, xmin=x_min, xmax=x_max,
                   umin=u_min, umax=u_max, QN=QN)
 
-    tr.compute_optimal_trajectories(x0, prec_x, vopt)
+    tr.set_new_x0(x0)
+    tr.compute_optimal_trajectories(vopt, prec_x)
     optx = tr.get_assumed_state()
     optu = tr.get_input_trajectory()
     print(optx.shape)
