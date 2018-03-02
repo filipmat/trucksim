@@ -357,6 +357,21 @@ class Path:
 
         return dist_sum
 
+    def get_position_on_path(self, xy):
+        """Returns the position on the path calculated from the beginning of the
+        path."""
+        index, _ = self.get_closest(xy)
+
+        position = self.get_distance_from_indices(index, 0)
+
+        return position
+
+    def get_path_length(self):
+        """Returns the length of the path. Calculated from the distance between
+        the last and the first indices. """
+        return self.get_distance_from_indices(len(self.path) - 1, 0)
+
+
     def plot(self, realh=5, realw=5):
         """Plots the path in a Tkinter window. Arguments are the width and
         height of the real path area in meters."""

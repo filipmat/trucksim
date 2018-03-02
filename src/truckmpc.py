@@ -14,7 +14,8 @@ class TruckMPC(object):
 
     def __init__(self, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
-                 xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None):
+                 xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None,
+                 id=None):
 
         self.Ad = Ad
         self.Bd = Bd
@@ -292,7 +293,15 @@ class TruckMPC(object):
 
     def get_assumed_state(self):
         """Returns the assumed state. """
-        return self.assumed_x
+        return self.assumed_x[:]
+
+    def get_instantaneous_acceleration(self):
+        """Returns the optimal acceleration for the current time instant.
+        Returns 0 if none available. """
+        try:
+            return self.get_input_trajectory()[0]
+        except TypeError:
+            return 0
 
     def get_input_trajectory(self):
         """Returns the optimal input trajectory computed by the MPC. Returns
@@ -311,11 +320,12 @@ class TruckMPC(object):
 
 
 def main():
+    """
     horizon = 10
     delta_t = 0.5
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.
+    zeta = 0.5
     s0 = 0.
     v0 = 1.
     Q = numpy.array([1, 0, 0, 1]).reshape(2, 2)
@@ -327,7 +337,7 @@ def main():
     s_max = 1000000
     acc_min = -2.
     acc_max = 2.
-    truck_length = 0.5
+    truck_length = 0.5*0
     safety_distance = 0.3
     timegap_scale = 2
     timegap = timegap_scale * delta_t
@@ -369,10 +379,12 @@ def main():
             s = 'i = {}: v = {:.1f}, s = {:.1f}'.format(
                 i, optx[i*2], optx[i*2 + 1])
             if i > horizon:
-                s += ', a = {:.1f}'.format(optu[i % horizon])
+                s += ', a = {:.2f}'.format(optu[i % horizon])
 
             print(s)
 
+    print(tr.get_instantaneous_acceleration())
+    """
 
 if __name__ == '__main__':
     main()
