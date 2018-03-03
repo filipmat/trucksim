@@ -18,7 +18,7 @@ import speed
 def print_numpy(a):
     str = '['
     for v in a.flatten():
-        str += ' {:.1f}'.format(v)
+        str += ' {:.2f}'.format(v)
     str += ' ]'
 
     print(str)
@@ -73,8 +73,11 @@ class Controller(object):
 
         self.dt = delta_t
         self.headstart_samples = int(2./self.dt)
+        self.h = horizon
 
         self.vopt = speed.Speed()
+
+        self.truck_length = truck_length
 
         # Setup ROS node.
         rospy.init_node(node_name, anonymous=True)
@@ -110,7 +113,7 @@ class Controller(object):
                                                       xmin=xmin, xmax=xmax,
                                                       umin=umin, umax=umax,
                                                       x0=x0, QN=QN,
-                                                      id=vehicle_id)
+                                                      t_id=vehicle_id)
             if i == 0:
                 self.mpcs[vehicle_id].set_leader(True)
 
@@ -188,20 +191,32 @@ class Controller(object):
         the PID controller. """
         v = self.positions[vehicle_id][3]
         path_pos = self.path_positions[vehicle_id].get_position()
+
         self.mpcs[vehicle_id].set_new_x0(numpy.array([v, path_pos]))
 
         if self.vehicle_ids.index(vehicle_id) == 0:
 
             self.mpcs[vehicle_id].compute_optimal_trajectories(self.vopt)
-            acc = self.mpcs[vehicle_id].get_instantaneous_acceleration()
+            acc_trajectory = self.mpcs[vehicle_id].get_input_trajectory()
+            acc = acc_trajectory[0]
 
             # TEST
-            print('id = {}, v = {:.1f}, a = {:.1f}'.format(vehicle_id, v, acc))
-            m = self.mpcs[vehicle_id]
-            #print_numpy(m.pos_ref)
-            #print_numpy(m.get_assumed_state())
-            print_numpy(m.get_input_trajectory())
-            # TEST
+            print('id = {}, s = {:.2f}, v = {:.2f}, a = {:.2f}'.format(
+                vehicle_id, path_pos, v, acc))
+
+            # print('s_ref: '),
+            # print_numpy(m.pos_ref)
+            # print('v_ref: '),
+            # print_numpy(m.vel_ref)
+            # print('a_ref: '),
+            # print_numpy(m.acc_ref)
+            # print('old_x: '),
+            # print_numpy(ass[:self.h * 2])
+            # print('ass_x: '),
+            # print_numpy(ass[self.h * 2:])
+            # print('a_tra: '),
+            # print_numpy(acc_trajectory)
+            # # TEST
 
             return acc
 
@@ -216,11 +231,13 @@ class Controller(object):
             acc = self.mpcs[vehicle_id].get_instantaneous_acceleration()
 
             # TEST
-            p1 = self.positions[id_prec]
-            p2 = self.positions[vehicle_id]
-            t = self.pt.get_distance([p1[0], p1[1]], [p2[0], p2[1]])/p2[3]
-            print('id = {}, v = {:.1f}, a = {:.1f}'.format(vehicle_id, v, acc))
-            #print('Timegap {:.1f}'.format(t))
+            p1 = self.path_positions[id_prec].get_position()
+            p2 = self.path_positions[vehicle_id].get_position()
+            d = p1 - p2 - self.truck_length
+            t = d/v
+            print('id = {}, s = {:.2f}, v = {:.2f}, a = {:.2f}'.format(
+                vehicle_id, path_pos, v, acc))
+            print('timegap = {:.2f}'.format(t))
             # TEST
 
             return acc
@@ -312,14 +329,14 @@ def main(args):
     delta_t = 0.2
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.05
+    zeta = 0.25
     s0 = 0.
     v0 = 1.
     Q_v = 1     # Part of Q matrix for velocity tracking.
     Q_s = 0.5   # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2) # State tracking.
     QN = Q
-    R_acc = 0.5*0
+    R_acc = 0.25
     R = numpy.array([1]) * R_acc  # Input tracking.
     v_min = 0.
     v_max = 2.

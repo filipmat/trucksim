@@ -8,10 +8,8 @@ from trucksim.msg import vehiclespeed
 from trucksim.msg import vehicleomega
 from trucksim.msg import vehicleposition
 
-import vehicle
-
-
-class TruckNode(vehicle.Vehicle):
+#class TruckNode(vehicle.Vehicle):
+class TruckNode(object):
     """Class for simulating the movement of a vehicle. The vehicle is identified
     with the name of the ROS node.
 
@@ -27,14 +25,18 @@ class TruckNode(vehicle.Vehicle):
 
         # Node and topic names and types.
         if u is None:
-            u = [0, 0]
+            self.u = [0, 0]
+        else:
+            self.u = u
         if x is None:
-            x = [0, 0, 0, 0]
+            self.x = [0, 0, 0, 0]
+        else:
+            self.x = x
 
         default_node_name = 'vehicle'
 
         # Initialize superclass.
-        super(TruckNode, self).__init__(x, u)
+        #super(TruckNode, self).__init__(x, u)
 
         # Subscriber for receiving speed control signal.
         rospy.Subscriber(speed_topic_name, speed_topic_type,
@@ -88,11 +90,9 @@ class TruckNode(vehicle.Vehicle):
 
             self.r.sleep()
 
-    def move(self, delta_t, u=None):
+    def move(self, delta_t):
         """Moves the vehicle. The vehicle moves as a unicycle. If the input
         u is not specified it will use the previous input. """
-        if u is not None:
-            self.set_input(u)
 
         # Save information for velocity calculation.
         self.last_x = self.x[:]
