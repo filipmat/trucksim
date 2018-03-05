@@ -1,5 +1,5 @@
 import numpy
-
+import math
 
 class Speed(object):
 
@@ -14,6 +14,8 @@ class Speed(object):
             self.pos = []
             self.vel = []
 
+        self.repeating = False
+
     def set_new(self, positions, velocities):
         """Sets new positions and corresponding velocities. """
         try:
@@ -26,6 +28,15 @@ class Speed(object):
         except TypeError:
             self.pos = [positions]
             self.vel = [velocities]
+
+    def generate_sin(self, vmin, vmax, smax, pts):
+        increase = float(smax)/pts
+        offset = float(vmax + vmin)/2
+        amplitude = float(vmax - vmin)/2
+
+        self.pos = [i*increase for i in range(pts)]
+        self.vel = [offset + amplitude*math.sin(pos*2*math.pi/smax)
+                    for pos in self.pos]
 
     def append(self, position, velocity):
         """Appends the new position and velocity values to the lists. """
@@ -74,6 +85,10 @@ class Speed(object):
 
     def _get_speed_at(self, position):
         """Returns the velocity at the given position."""
+        # If speed profile is repeating, remove multipliers of period.
+        if self.repeating:
+            position = position % self.pos[-1]
+
         if len(self.vel) == 0:
             return 0
         if len(self.vel) == 1 or position <= self.pos[0]:
@@ -97,6 +112,11 @@ class Speed(object):
 
     def __str__(self):
         return '(pos, vel): ' + str(zip(self.pos, self.vel))
+
+    def get_average(self):
+        average = float(sum(self.vel))/len(self.vel)
+
+        return average
 
 
 def main():

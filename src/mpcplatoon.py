@@ -66,18 +66,23 @@ class Controller(object):
                  node_name='controller', v=1., k_p=0., k_i=0., k_d=0., rate=20,
                  xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None):
 
+        self.verbose = True
+
         self.v = v  # Desired velocity of the vehicle.
         self.vehicle_ids = ['/' + v_id for v_id in vehicle_ids]  # IDs.
         self.running = False  # If controller is running or not.
         self.rate = 1/delta_t
 
         self.dt = delta_t
-        self.headstart_samples = int(2./self.dt)
+        self.headstart_samples = int(1./self.dt)
         self.h = horizon
 
         self.vopt = speed.Speed()
 
         self.truck_length = truck_length
+
+        self.k = 0
+        self.last_control_time = time.time()
 
         # Setup ROS node.
         rospy.init_node(node_name, anonymous=True)
@@ -113,7 +118,7 @@ class Controller(object):
                                                       xmin=xmin, xmax=xmax,
                                                       umin=umin, umax=umax,
                                                       x0=x0, QN=QN,
-                                                      t_id=vehicle_id)
+                                                      vehicle_id=vehicle_id)
             if i == 0:
                 self.mpcs[vehicle_id].set_leader(True)
 
@@ -144,6 +149,15 @@ class Controller(object):
     def _control(self):
         """Perform control actions from received data. Sends new values to
         truck. """
+
+        self._control_startup()
+        self._control_normal_operation()
+
+
+    def _control_startup(self):
+
+        v = self.vopt.get_average()
+
         for j in range(len(self.vehicle_ids)):
 
             if self.running:
@@ -155,18 +169,25 @@ class Controller(object):
                         self.pub_omega.publish(vehicle_id, omega)
 
                     if i < self.headstart_samples - 3:
-                        acc = 1.5*self.v/(self.headstart_samples*self.dt)
+                        acc = v/((self.headstart_samples - 3)*self.dt)
                     else:
                         acc = 0
 
                     self.pub_speed.publish(self.vehicle_ids[j], acc)
 
                     time.sleep(self.dt)
-                    print('{}/{}: Starting {}'.format(
+                    print('{:2.0f}/{}: Starting {}'.format(
                         i, self.headstart_samples - 1, self.vehicle_ids[j]))
+
+    def _control_normal_operation(self):
 
         while not rospy.is_shutdown():
             if self.running:
+                if self.verbose and self.k % round(1./self.dt) == 0:
+                    tm = time.time() - self.last_control_time
+                    self.last_control_time = time.time()
+                    print('k = {} ({:.1f}) - - - - - - - - - - - - - - '.format(
+                        self.k, tm))
 
                 for vehicle_id in self.vehicle_ids:
                     omega = self._get_omega(vehicle_id)
@@ -176,6 +197,8 @@ class Controller(object):
                     self.pub_speed.publish(vehicle_id, acc)
 
                 time.sleep(self.dt)
+
+                self.k += 1
 
     def _get_omega(self, vehicle_id):
         """Returns the control input omega for the specified vehicle. """
@@ -200,26 +223,6 @@ class Controller(object):
             acc_trajectory = self.mpcs[vehicle_id].get_input_trajectory()
             acc = acc_trajectory[0]
 
-            # TEST
-            print('id = {}, s = {:.2f}, v = {:.2f}, a = {:.2f}'.format(
-                vehicle_id, path_pos, v, acc))
-
-            # print('s_ref: '),
-            # print_numpy(m.pos_ref)
-            # print('v_ref: '),
-            # print_numpy(m.vel_ref)
-            # print('a_ref: '),
-            # print_numpy(m.acc_ref)
-            # print('old_x: '),
-            # print_numpy(ass[:self.h * 2])
-            # print('ass_x: '),
-            # print_numpy(ass[self.h * 2:])
-            # print('a_tra: '),
-            # print_numpy(acc_trajectory)
-            # # TEST
-
-            return acc
-
         else:
 
             id_prec = self.vehicle_ids[self.vehicle_ids.index(vehicle_id) - 1]
@@ -230,17 +233,33 @@ class Controller(object):
 
             acc = self.mpcs[vehicle_id].get_instantaneous_acceleration()
 
-            # TEST
-            p1 = self.path_positions[id_prec].get_position()
-            p2 = self.path_positions[vehicle_id].get_position()
-            d = p1 - p2 - self.truck_length
-            t = d/v
-            print('id = {}, s = {:.2f}, v = {:.2f}, a = {:.2f}'.format(
-                vehicle_id, path_pos, v, acc))
-            print('timegap = {:.2f}'.format(t))
-            # TEST
+        # Print stuff
+        if self.verbose:
+            if self.k % round(1./self.dt) == 0:
+                opt_v = self.vopt.get_speed_at(path_pos)
 
-            return acc
+                s = ''
+                s += 'id = {}, s = {:6.2f}'.format(vehicle_id, path_pos)
+                s += ', v = {:.2f} ({:.2f}), a = {:5.2f}'.format(
+                    v, opt_v, acc)
+
+                if self.vehicle_ids.index(vehicle_id) > 0:
+                    p1 = self.path_positions[id_prec].get_position()
+                    p2 = self.path_positions[vehicle_id].get_position()
+                    d = p1 - p2 - self.truck_length
+                    try:
+                        t = d / v
+                    except ZeroDivisionError:
+                        t = 0
+                    s += ', timegap = {:.2f}'.format(t)
+
+                    if self.mpcs[vehicle_id].status != 'OK':
+                        s += '. ' + self.mpcs[vehicle_id].status
+
+
+                print(s)
+
+        return acc
 
     def stop(self):
         """Stops/pauses the controller. """
@@ -325,18 +344,18 @@ def main(args):
 
     rate = 20
 
-    horizon = 5
-    delta_t = 0.2
+    horizon = 10
+    delta_t = 0.1
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.25
+    zeta = 0.5
     s0 = 0.
     v0 = 1.
     Q_v = 1     # Part of Q matrix for velocity tracking.
     Q_s = 0.5   # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2) # State tracking.
     QN = Q
-    R_acc = 0.25
+    R_acc = 0.1
     R = numpy.array([1]) * R_acc  # Input tracking.
     v_min = 0.
     v_max = 2.
@@ -344,9 +363,9 @@ def main(args):
     s_max = 1000000
     acc_min = -0.5
     acc_max = 0.5
-    truck_length = 0.5
-    safety_distance = 0.3
-    timegap = 0.5
+    truck_length = 0.2
+    safety_distance = 0.1
+    timegap = 1.
 
     x0 = numpy.array([s0, v0])
     xmin = numpy.array([v_min, s_min])
@@ -354,12 +373,14 @@ def main(args):
     umin = numpy.array([acc_min])
     umax = numpy.array([acc_max])
 
-    # Test optimal speed profile.
-    opt_step = 20
-    opt_v = 1.
-    pos = opt_v * delta_t * numpy.arange(opt_step)
-    vel = opt_v * numpy.ones(opt_step)
-    vopt = speed.Speed(pos, vel)
+    # Reference speed profile.
+    opt_v_pts = 1000
+    opt_v_max = 1.3
+    opt_v_min = 0.7
+    opt_v_period_length = 100
+    vopt = speed.Speed()
+    vopt.generate_sin(opt_v_min, opt_v_max, opt_v_period_length, opt_v_pts)
+    vopt.repeating = True
 
     pt = path.Path()
     pt.gen_circle_path([x_radius, y_radius], points=pts, center=center)

@@ -16,7 +16,7 @@ class TruckMPC(object):
     def __init__(self, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
                  xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None,
-                 t_id=None):
+                 vehicle_id=None):
 
         self.Ad = Ad
         self.Bd = Bd
@@ -29,12 +29,19 @@ class TruckMPC(object):
         self.safety_distance = safety_distance
         self.timegap = timegap
 
+        if vehicle_id is None:
+            self.vehicle_id = 'NO_ID'
+        else:
+            self.vehicle_id = vehicle_id
+
         self.nx = self.Ad.shape[0]
         self.nu = self.Bd.shape[1]
 
         self.inf = 1000000
 
         self.is_leader = False
+
+        self.status = 'OK'
 
         if xmin is None:
             self.xmin = -self.inf*numpy.ones(self.nx)  # No min state limit.
@@ -112,9 +119,11 @@ class TruckMPC(object):
         prob = cvxpy.Problem(objective, constraints)
         try:
             prob.solve(solver='CVXOPT')
+            self.status = 'OK'
         except cvxpy.error.SolverError as e:
             print('Could not solve MPC: {}'.format(e))
             print('status: {}'.format(prob.status))
+            self.status = 'Could not solve MPC'
 
     def update_assumed_state(self):
         """Updates the assumed state. The length is two horizons. The first part
@@ -124,8 +133,8 @@ class TruckMPC(object):
             self.assumed_x[self.h*self.nx:] = \
                 self.x.value[:self.h*self.nx].flatten()
         except TypeError:
-            print('No MPC optimal, using backup predicted. ')
             self.assumed_x[self.h*self.nx:] = self.get_backup_predicted_state()
+            self.status = 'No MPC optimal. '
 
     def get_backup_predicted_state(self):
         """Returns a predicted state trajectory over one horizon. Used if there
@@ -162,7 +171,7 @@ class TruckMPC(object):
 
         if not self.is_leader:
             safety_constraints = self.get_safety_constraints()
-            #constraints = constraints + safety_constraints
+            constraints = constraints + safety_constraints
 
         return constraints
 
@@ -221,7 +230,6 @@ class TruckMPC(object):
         return c
 
     def get_state_reference_cost(self):
-        # TODO: Remove cost for x0?
         PQ = numpy.kron(numpy.eye(self.h + 1), (1 - self.zeta) * self.Q)
         PQ_ch = numpy.linalg.cholesky(PQ)
 
@@ -268,7 +276,7 @@ class TruckMPC(object):
         return constraints
 
     def get_timegap_cost(self):
-        shift = int(round(self.timegap / self.dt)) + 1
+        shift = int(round(self.timegap / self.dt))
         xgapref = self.preceding_x[
                        (self.h - shift)*self.nx:(2*self.h - shift + 1)*self.nx]
 
@@ -281,7 +289,7 @@ class TruckMPC(object):
 
     def get_safety_constraints(self):
         pos = self.preceding_x[
-              (self.h - 2) * self.nx:(2 * self.h - 1) * self.nx][1::2]
+              (self.h - 1) * self.nx:(2 * self.h) * self.nx][1::2]
         posmax = pos - self.truck_length - self.safety_distance
         vmax = numpy.ones(self.h + 1)*self.inf
 
