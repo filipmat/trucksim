@@ -1,6 +1,7 @@
 import numpy
 import scipy.sparse as sparse
 import cvxpy
+import time
 
 import speed
 
@@ -15,8 +16,8 @@ class TruckMPC(object):
 
     def __init__(self, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
-                 xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None,
-                 vehicle_id=None):
+                 xmin=None, xmax=None, umin=None, umax=None, x0=None,
+                 vehicle_id=None, saved_h=2):
 
         self.Ad = Ad
         self.Bd = Bd
@@ -78,11 +79,11 @@ class TruckMPC(object):
         self.uref = numpy.zeros(self.h*self.nu)
 
         # Assumed state contains past states and optimal state from MPC.
-        self.assumed_x = numpy.zeros(self.h * 2 * self.nx)
+        self.saved_h = saved_h
+        self.assumed_x = numpy.zeros(self.h * (self.saved_h + 1) * self.nx)
 
         # State of preceding vehicle.
-        self.preceding_x = numpy.zeros(self.h * 2 * self.nx)
-
+        self.preceding_x = numpy.zeros(self.h * (self.saved_h + 1) * self.nx)
 
         self.x = cvxpy.Variable((self.h + 1) * self.nx)
         self.u = cvxpy.Variable(self.h * self.nu)
@@ -94,13 +95,15 @@ class TruckMPC(object):
         """Sets the current initial value. The positions of previous saved
         states are shifted. """
         self.x0 = x0
-        self.assumed_x[:self.h * self.nx] = self.assumed_x[
-                                            self.nx:(self.h + 1) * self.nx]
+        self.assumed_x[:self.h * self.saved_h * self.nx] = \
+            self.assumed_x[self.nx:(self.h*self.saved_h + 1) * self.nx]
 
     def compute_optimal_trajectories(self, vopt, preceding_x=None):
         """Computes the optimal trajectories using MPC and updates the vehicle
         assumed state. """
+
         self.update_mpc(vopt, preceding_x)
+
         self.solve_mpc()
         self.update_assumed_state()
 
@@ -113,10 +116,15 @@ class TruckMPC(object):
 
     def solve_mpc(self):
         """Solves the MPC problem. """
+
         cost = self.get_mpc_cost()
+
         objective = cvxpy.Minimize(cost)
+
         constraints = self.get_mpc_constraints()
+
         prob = cvxpy.Problem(objective, constraints)
+
         try:
             prob.solve(solver='CVXOPT')
             self.status = 'OK'
@@ -126,14 +134,16 @@ class TruckMPC(object):
             self.status = 'Could not solve MPC'
 
     def update_assumed_state(self):
-        """Updates the assumed state. The length is two horizons. The first part
-        are the previous states, the second part starts with the current state
-        and then contains the optimal state from the MPC solution. """
+        """Updates the assumed state. The length is self.saved_h horizons. The
+        first part are the previous states, the second part starts with the
+        current state and then contains the optimal state from the MPC solution.
+        """
         try:
-            self.assumed_x[self.h*self.nx:] = \
+            self.assumed_x[self.h*self.saved_h*self.nx:] = \
                 self.x.value[:self.h*self.nx].flatten()
         except TypeError:
-            self.assumed_x[self.h*self.nx:] = self.get_backup_predicted_state()
+            self.assumed_x[self.h*self.saved_h*self.nx:] = \
+                self.get_backup_predicted_state()
             self.status = 'No MPC optimal. '
 
     def get_backup_predicted_state(self):
@@ -278,7 +288,8 @@ class TruckMPC(object):
     def get_timegap_cost(self):
         shift = int(round(self.timegap / self.dt))
         xgapref = self.preceding_x[
-                       (self.h - shift)*self.nx:(2*self.h - shift + 1)*self.nx]
+                       (self.h*self.saved_h - shift)*self.nx:
+                       (self.h*(self.saved_h + 1) - shift + 1)*self.nx]
 
         PQ = numpy.kron(numpy.eye(self.h + 1), self.zeta * self.Q)
         PQ_ch = numpy.linalg.cholesky(PQ)
@@ -289,7 +300,8 @@ class TruckMPC(object):
 
     def get_safety_constraints(self):
         pos = self.preceding_x[
-              (self.h - 1) * self.nx:(2 * self.h) * self.nx][1::2]
+              (self.h*self.saved_h - 1) * self.nx:
+              (self.h*(self.saved_h + 1)) * self.nx][1::2]
         posmax = pos - self.truck_length - self.safety_distance
         vmax = numpy.ones(self.h + 1)*self.inf
 

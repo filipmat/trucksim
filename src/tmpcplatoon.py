@@ -26,8 +26,8 @@ class Controller(object):
     def __init__(self, vehicle_ids,
                  Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
-                 xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None,
-                 runs=20):
+                 xmin=None, xmax=None, umin=None, umax=None, x0=None,
+                 runs=20, saved_h=2):
 
         self.vehicle_ids = ['/' + v_id for v_id in vehicle_ids]  # IDs.
         self.running = False  # If controller is running or not.
@@ -40,6 +40,8 @@ class Controller(object):
         self.runs = runs
 
         self.truck_length = truck_length
+
+        self.saved_h = 2
 
         self.mpcs = dict()
         self.iopt_s = dict()
@@ -54,8 +56,9 @@ class Controller(object):
                                                       safety_distance, timegap,
                                                       xmin=xmin, xmax=xmax,
                                                       umin=umin, umax=umax,
-                                                      x0=x0, QN=QN,
-                                                      t_id=vehicle_id)
+                                                      x0=x0,
+                                                      vehicle_id=vehicle_id,
+                                                      saved_h=saved_h)
             if i == 0:
                 self.mpcs[vehicle_id].set_leader(True)
 
@@ -75,7 +78,6 @@ class Controller(object):
                 print('\nj = {} - - - - - - - - - - - - - - - - - - '.format(j))
 
                 for vehicle_id in self.vehicle_ids:
-
                     acc = self._get_acc(vehicle_id)
 
     def _get_acc(self, vehicle_id):
@@ -126,15 +128,15 @@ class Controller(object):
         print('a_ref: '),
         print_numpy(m.acc_ref)
         print('old_x: '),
-        print_numpy(ass[:self.h * 2])
+        print_numpy(ass[:(self.h * self.saved_h) * 2])
         print('ass_x: '),
-        print_numpy(ass[self.h * 2:])
+        print_numpy(ass[(self.h * self.saved_h) * 2:])
         print('a_tra: '),
         print_numpy(acc_trajectory)
         # TEST
 
-        self.iopt_v[vehicle_id] = ass[self.h*2 + 2]
-        self.iopt_s[vehicle_id] = ass[self.h*2 + 3]
+        self.iopt_v[vehicle_id] = ass[(self.h * self.saved_h)*2 + 2]
+        self.iopt_s[vehicle_id] = ass[(self.h * self.saved_h)*2 + 3]
 
         return acc
 
@@ -176,7 +178,6 @@ def main(args):
     Q_v = 0.5     # Part of Q matrix for velocity tracking.
     Q_s = 0.1   # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0., 0., Q_s]).reshape(2, 2) # State tracking.
-    QN = numpy.zeros((2, 2))
     R_acc = 0.25
     R = numpy.array([1]) * R_acc  # Input tracking.
     v_min = 0.
@@ -188,6 +189,7 @@ def main(args):
     truck_length = 0.5
     safety_distance = 0.3
     timegap = 0.5
+    saved_h = 2
 
     runs = 5
 
@@ -209,7 +211,7 @@ def main(args):
         Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
         safety_distance, timegap,
         xmin=xmin, xmax=xmax,
-        umin=umin, umax=umax, x0=x0, QN=QN, runs=runs
+        umin=umin, umax=umax, x0=x0, runs=runs, saved_h=saved_h
     )
 
     controller.set_vopt(vopt)
@@ -220,3 +222,51 @@ def main(args):
 
 if __name__ == '__main__':
     main(sys.argv)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

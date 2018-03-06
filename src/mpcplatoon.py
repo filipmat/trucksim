@@ -63,8 +63,9 @@ class Controller(object):
                  omega_topic_type, omega_topic_name, vehicle_ids, path,
                  Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
-                 node_name='controller', v=1., k_p=0., k_i=0., k_d=0., rate=20,
-                 xmin=None, xmax=None, umin=None, umax=None, x0=None, QN=None):
+                 node_name='controller', v=1., k_p=0., k_i=0., k_d=0.,
+                 xmin=None, xmax=None, umin=None, umax=None, x0=None,
+                 saved_h=2):
 
         self.verbose = True
 
@@ -117,8 +118,9 @@ class Controller(object):
                                                       safety_distance, timegap,
                                                       xmin=xmin, xmax=xmax,
                                                       umin=umin, umax=umax,
-                                                      x0=x0, QN=QN,
-                                                      vehicle_id=vehicle_id)
+                                                      x0=x0,
+                                                      vehicle_id=vehicle_id,
+                                                      saved_h=saved_h)
             if i == 0:
                 self.mpcs[vehicle_id].set_leader(True)
 
@@ -180,25 +182,32 @@ class Controller(object):
                         i, self.headstart_samples - 1, self.vehicle_ids[j]))
 
     def _control_normal_operation(self):
+        k_skip = round(1./self.dt)
 
         while not rospy.is_shutdown():
             if self.running:
-                if self.verbose and self.k % round(1./self.dt) == 0:
+                time_start = time.time()
+                if self.verbose and self.k % k_skip == 0:
                     tm = time.time() - self.last_control_time
                     self.last_control_time = time.time()
-                    print('k = {} ({:.1f}) - - - - - - - - - - - - - - '.format(
-                        self.k, tm))
+                    print('\nk = {}, avg time = {:.3f}, dt = {:.2f}, diff = {:.3f}'.format(
+                        self.k, tm/k_skip, self.dt, tm/k_skip - self.dt))
 
                 for vehicle_id in self.vehicle_ids:
                     omega = self._get_omega(vehicle_id)
                     self.pub_omega.publish(vehicle_id, omega)
 
                     acc = self._get_acc(vehicle_id)
+
                     self.pub_speed.publish(vehicle_id, acc)
 
-                time.sleep(self.dt)
-
                 self.k += 1
+
+                t_elapsed = time.time() - time_start
+                if (t_elapsed < self.dt):
+                    time.sleep(self.dt - t_elapsed)
+
+
 
     def _get_omega(self, vehicle_id):
         """Returns the control input omega for the specified vehicle. """
@@ -217,25 +226,21 @@ class Controller(object):
 
         self.mpcs[vehicle_id].set_new_x0(numpy.array([v, path_pos]))
 
+        # Leader vehicle: don't add preceding vehicle information.
         if self.vehicle_ids.index(vehicle_id) == 0:
-
             self.mpcs[vehicle_id].compute_optimal_trajectories(self.vopt)
-            acc_trajectory = self.mpcs[vehicle_id].get_input_trajectory()
-            acc = acc_trajectory[0]
 
         else:
-
             id_prec = self.vehicle_ids[self.vehicle_ids.index(vehicle_id) - 1]
             preceding_x = self.mpcs[id_prec].get_assumed_state()
 
             self.mpcs[vehicle_id].compute_optimal_trajectories(
                 self.vopt, preceding_x)
 
-            acc = self.mpcs[vehicle_id].get_instantaneous_acceleration()
+        acc = self.mpcs[vehicle_id].get_instantaneous_acceleration()
 
         # Print stuff
-        if self.verbose:
-            if self.k % round(1./self.dt) == 0:
+        if self.verbose and self.k % round(1./self.dt) == 0:
                 opt_v = self.vopt.get_speed_at(path_pos)
 
                 s = ''
@@ -342,9 +347,7 @@ def main(args):
         k_i = 0
         k_d = 3
 
-    rate = 20
-
-    horizon = 10
+    horizon = 5
     delta_t = 0.1
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
@@ -366,6 +369,7 @@ def main(args):
     truck_length = 0.2
     safety_distance = 0.1
     timegap = 1.
+    saved_h = 2
 
     x0 = numpy.array([s0, v0])
     xmin = numpy.array([v_min, s_min])
@@ -393,9 +397,9 @@ def main(args):
         Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
         safety_distance, timegap,
         node_name=node_name,
-        v=v, k_p=k_p, k_i=k_i, k_d=k_d, rate=rate,
+        v=v, k_p=k_p, k_i=k_i, k_d=k_d,
         xmin=xmin, xmax=xmax,
-        umin=umin, umax=umax, x0=x0, QN=QN
+        umin=umin, umax=umax, x0=x0, saved_h=saved_h
     )
 
     controller.set_vopt(vopt)
