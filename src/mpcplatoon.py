@@ -174,8 +174,12 @@ class Controller(object):
                         acc = v/((self.headstart_samples - 3)*self.dt)
                     else:
                         acc = 0
-
                     self.pub_speed.publish(self.vehicle_ids[j], acc)
+
+                    vel = self.positions[vehicle_id][3]
+                    path_pos = self.path_positions[vehicle_id].get_position()
+
+                    self.mpcs[vehicle_id].set_new_x0(numpy.array([vel, path_pos]))
 
                     time.sleep(self.dt)
                     print('{:2.0f}/{}: Starting {}'.format(
@@ -241,28 +245,28 @@ class Controller(object):
 
         # Print stuff
         if self.verbose and self.k % round(1./self.dt) == 0:
-                opt_v = self.vopt.get_speed_at(path_pos)
+            opt_v = self.vopt.get_speed_at(path_pos)
 
-                s = ''
-                s += 'id = {}, s = {:6.2f}'.format(vehicle_id, path_pos)
-                s += ', v = {:.2f} ({:.2f}), a = {:5.2f}'.format(
-                    v, opt_v, acc)
+            s = ''
+            s += 'id = {}, s = {:6.2f}'.format(vehicle_id, path_pos)
+            s += ', v = {:.2f} ({:.2f}), a = {:5.2f}'.format(
+                v, opt_v, acc)
 
-                if self.vehicle_ids.index(vehicle_id) > 0:
-                    p1 = self.path_positions[id_prec].get_position()
-                    p2 = self.path_positions[vehicle_id].get_position()
-                    d = p1 - p2 - self.truck_length
-                    try:
-                        t = d / v
-                    except ZeroDivisionError:
-                        t = 0
-                    s += ', timegap = {:.2f}'.format(t)
+            if self.vehicle_ids.index(vehicle_id) > 0:
+                p1 = self.path_positions[id_prec].get_position()
+                p2 = self.path_positions[vehicle_id].get_position()
+                d = p1 - p2 - self.truck_length
+                try:
+                    t = d / v
+                except ZeroDivisionError:
+                    t = 0
+                s += ', timegap = {:.2f}'.format(t)
 
-                    if self.mpcs[vehicle_id].status != 'OK':
-                        s += '. ' + self.mpcs[vehicle_id].status
+                if self.mpcs[vehicle_id].status != 'OK':
+                    s += '. ' + self.mpcs[vehicle_id].status
 
 
-                print(s)
+            print(s)
 
         return acc
 
