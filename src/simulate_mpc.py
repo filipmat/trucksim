@@ -6,6 +6,7 @@ from matplotlib import pyplot
 
 import speed
 import truckmpc
+import truckmpc2
 import frenet_unicycle
 import path
 
@@ -47,17 +48,20 @@ class SimMPC(object):
         self.accelerations = numpy.zeros((len(self.vehicles), runs))
         self.timegaps = numpy.zeros((len(self.vehicles), runs))
         self.path_errors = numpy.zeros((len(self.vehicles), runs))
+        self.velocity_errors = numpy.zeros((len(self.vehicles), runs))
 
         self.mpcs = [None for i in self.vehicles]
         for i, vehicle in enumerate(self.vehicles):
-            self.mpcs[i] = truckmpc.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q,
+            if i == 0:
+                leader = True
+            else:
+                leader = False
+            self.mpcs[i] = truckmpc2.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q,
                                              R, truck_length, safety_distance,
                                              timegap, xmin=xmin, xmax=xmax,
                                              umin=umin, umax=umax, x0=x0,
                                              vehicle_id=vehicle.ID,
-                                             saved_h=saved_h)
-
-        self.mpcs[0].set_leader(True)
+                                             saved_h=saved_h, is_leader=leader)
 
         print('\nSimulation initialized. ')
 
@@ -72,10 +76,15 @@ class SimMPC(object):
 
     def finish(self):
         s = 'Simulation finished.'
-        s += '\nSimulated time = {:.2f}s'.format(self.runs*self.dt)
-        s += ', iterations = {}, average iteration time = {:.4f}s'.format(
+        s += '\nSimulated time = {:.2f}s. delta_t = {:.2f}. Total elapsed time = {:.2f}s.'.format(
+            self.runs*self.dt, self.dt, self.total_elapsed_time)
+        s += '\nIterations = {}, average iteration time = {:.4f}s'.format(
             self.runs, self.total_elapsed_time/self.runs)
-        s += '\nTotal elapsed time = {:.2f}s'.format(self.total_elapsed_time)
+        s += ' ({:.4f}s / vehicle).'.format(
+            self.total_elapsed_time/(self.runs*len(self.vehicles)))
+        s += '\nMean path error = {:.2f}, mean timegap = {:.2f}, mean v error = {:.2f}'.format(
+            numpy.mean(self.path_errors), numpy.mean(self.timegaps[1:]),
+            numpy.mean(self.velocity_errors))
 
         print(s)
 
@@ -103,7 +112,8 @@ class SimMPC(object):
         """Runs the control system. """
         s = ''
         for k in range(self.runs):
-            s += '\nk = {} - - - - - - - - - - - - - - - - - - - - -'.format(k)
+            if self.verbose:
+                s += '\nk = {} - - - - - - - - - - - - - - - - - - -'.format(k)
 
             for j, vehicle in enumerate(self.vehicles):
                 vel = vehicle.get_velocity()
@@ -124,8 +134,9 @@ class SimMPC(object):
 
                 opt_v = self.vopt.get_speed_at(path_pos)
 
-                s += '\nID = {}, s = {:.2f}, v = {:.2f} ({:.2f}), a = {:.2f}'.format(
-                    vehicle.ID, path_pos, vel, opt_v, acc)
+                if self.verbose:
+                    s += '\nID = {}, s = {:.2f}, v = {:.2f} ({:.2f}), a = {:.2f}'.format(
+                        vehicle.ID, path_pos, vel, opt_v, acc)
 
                 timegap = 0
                 if j > 0:
@@ -135,13 +146,15 @@ class SimMPC(object):
                     except ZeroDivisionError:
                         timegap = 0
 
-                    s += ', timegap = {:.2f}'.format(timegap)
+                    if self.verbose:
+                        s += ', timegap = {:.2f}'.format(timegap)
 
                 self.timegaps[j][k] = timegap
                 self.positions[j][k] = path_pos
                 self.velocities[j][k] = vel
                 self.accelerations[j][k] = acc
                 self.path_errors[j][k] = vehicle.get_error()
+                self.velocity_errors[j][k] = vel - opt_v
 
                 vehicle.update(self.dt)
 
@@ -238,7 +251,7 @@ def main(args):
     timegap = 1
     saved_h = 2
 
-    runs = 400
+    runs = 20
 
     xmin = numpy.array([v_min, s_min])
     xmax = numpy.array([v_max, s_max])
@@ -267,6 +280,7 @@ def main(args):
     kd = 3
 
     verbose = False
+    print_graphs = True
 
     start_distance = 0.75
     path_len = pt.get_path_length()
@@ -295,7 +309,8 @@ def main(args):
 
     sim.run()
 
-    sim.print_graps()
+    if print_graphs:
+        sim.print_graps()
 
 
 if __name__ == '__main__':

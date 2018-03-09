@@ -355,13 +355,12 @@ def main(args):
     delta_t = 0.1
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.5
+    zeta = 0.75
     s0 = 0.
     v0 = 1.
     Q_v = 1     # Part of Q matrix for velocity tracking.
     Q_s = 0.5   # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2) # State tracking.
-    QN = Q
     R_acc = 0.1
     R = numpy.array([1]) * R_acc  # Input tracking.
     v_min = 0.
@@ -385,7 +384,7 @@ def main(args):
     opt_v_pts = 1000
     opt_v_max = 1.3
     opt_v_min = 0.7
-    opt_v_period_length = 100
+    opt_v_period_length = 20
     vopt = speed.Speed()
     vopt.generate_sin(opt_v_min, opt_v_max, opt_v_period_length, opt_v_pts)
     vopt.repeating = True

@@ -28,11 +28,14 @@ class TruckMPC(object):
         self.nx = self.Ad.shape[0]
         self.nu = self.Bd.shape[1]
 
-        self.inf = 1000000
+        self.x = cvxpy.Variable((self.h + 1) * self.nx)
+        self.u = cvxpy.Variable(self.h * self.nu)
+
+        self.inf = 1000000  # "Infinity" used when there are not limits give.
 
         self.is_leader = False
 
-        self.status = 'OK'
+        self.status = 'OK'  # Status of solver.
 
         if xmin is None:
             self.xmin = -self.inf*numpy.ones(self.nx)  # No min state limit.
@@ -59,6 +62,14 @@ class TruckMPC(object):
         else:
             self.x0 = x0
 
+        # Pre-compute vectors and matrices used for QP.
+        self.state_constraints = self.get_state_constraints()
+        self.input_constraints = self.get_input_constraints()
+        self.AA = 0
+        self.BB = 0
+        self.xZero = 0
+        self.pre_compute_dynamics_constraints_parts()
+
         # Computed from optimal speed profile.
         self.pos_ref = numpy.zeros(self.h + 1)
         self.vel_ref = numpy.zeros(self.h + 1)
@@ -75,11 +86,7 @@ class TruckMPC(object):
         # State of preceding vehicle.
         self.preceding_x = numpy.zeros(self.h * (self.saved_h + 1) * self.nx)
 
-        self.x = cvxpy.Variable((self.h + 1) * self.nx)
-        self.u = cvxpy.Variable(self.h * self.nu)
-
-    def set_leader(self, is_leader):
-        self.is_leader = is_leader
+        self.prob = cvxpy.Problem(cvxpy.Minimize(1))
 
     def set_new_x0(self, x0):
         """Sets the current initial value. The positions of previous saved
@@ -111,18 +118,16 @@ class TruckMPC(object):
 
         cost = self.get_mpc_cost()
 
-        objective = cvxpy.Minimize(cost)
+        self.prob.objective = cvxpy.Minimize(cost)
 
-        constraints = self.get_mpc_constraints()
-
-        prob = cvxpy.Problem(objective, constraints)
+        self.prob.constraints = self.get_mpc_constraints()
 
         try:
-            prob.solve(solver='CVXOPT')
+            self.prob.solve(solver='CVXOPT')
             self.status = 'OK'
         except cvxpy.error.SolverError as e:
             print('Could not solve MPC: {}'.format(e))
-            print('status: {}'.format(prob.status))
+            print('status: {}'.format(self.prob.status))
             self.status = 'Could not solve MPC'
 
     def update_assumed_state(self):
@@ -137,15 +142,6 @@ class TruckMPC(object):
             self.assumed_x[self.h*self.saved_h*self.nx:] = \
                 self.get_backup_predicted_state()
             self.status = 'No MPC optimal. '
-
-    def get_backup_predicted_state(self):
-        """Returns a predicted state trajectory over one horizon. Used if there
-        is no optimal trajectory available from the MPC solver. """
-        state = numpy.zeros(self.h*self.nx)
-        state[0::2] = self.x0[0]
-        state[1::2] = self.x0[1] + self.x0[0]*self.dt*numpy.arange(self.h)
-
-        return state
 
     def get_mpc_cost(self):
         """Returns the cost for the MPC problem. The cost is the combined cost
@@ -165,19 +161,115 @@ class TruckMPC(object):
     def get_mpc_constraints(self):
         """Returns the constraints for the MPC problem. """
         dynamics_constraints = self.get_dynamics_constraints()
-        input_constraints = self.get_input_constraints()
-        state_constraints = self.get_state_constraints()
 
         constraints = []
-        constraints += dynamics_constraints
-        constraints += input_constraints
-        constraints += state_constraints
+        constraints += dynamics_constraints + self.state_constraints + self.input_constraints
 
         if not self.is_leader:
             safety_constraints = self.get_safety_constraints()
             constraints = constraints + safety_constraints
 
         return constraints
+
+    def get_state_reference_cost(self):
+        """Returns the cost corresponding to state reference tracking. """
+        PQ = numpy.kron(numpy.eye(self.h + 1), (1 - self.zeta) * self.Q)
+        PQ_ch = numpy.linalg.cholesky(PQ)
+
+        cost = cvxpy.sum_entries(cvxpy.square(PQ_ch * (self.x - self.xref)))
+
+        return cost
+
+    def get_input_reference_cost(self):
+        """Returns the cost corresponding to input reference tracking. """
+        PR = numpy.kron(numpy.eye(self.h), self.R)
+        PR_ch = numpy.linalg.cholesky(PR)
+
+        cost = cvxpy.sum_entries(cvxpy.square(PR_ch * (self.u - self.uref)))
+
+        return cost
+
+    def get_timegap_cost(self):
+        """Returns the cost corresponding to timegap tracking. """
+        shift = int(round(self.timegap / self.dt))
+        xgapref = self.preceding_x[
+                       (self.h*self.saved_h - shift)*self.nx:
+                       (self.h*(self.saved_h + 1) - shift + 1)*self.nx]
+
+        PQ = numpy.kron(numpy.eye(self.h + 1), self.zeta * self.Q)
+        PQ_ch = numpy.linalg.cholesky(PQ)
+
+        cost = cvxpy.sum_entries(cvxpy.square(PQ_ch * (self.x - xgapref)))
+
+        return cost
+
+    def get_safety_constraints(self):
+        """Returns the constraints corresponding to keeping a safe distance."""
+        pos = self.preceding_x[
+              (self.h*self.saved_h - 1) * self.nx:
+              (self.h*(self.saved_h + 1)) * self.nx][1::2]
+        posmax = pos - self.truck_length - self.safety_distance
+        vmax = numpy.ones(self.h + 1)*self.inf
+
+        statemax = self.interleave_vectors(vmax, posmax)
+
+        AS = numpy.eye((self.h + 1)*self.nx)
+
+        constraints = [AS * self.x <= statemax]
+
+        return constraints
+
+    ####################### ONGOING ##################################################
+
+    def pre_compute_dynamics_constraints_parts(self):
+        """Precomputes the parts of the dynamics that can be precomputed. """
+        self.AA = numpy.kron(numpy.eye(self.h + 1), -numpy.eye(self.nx)) + \
+             numpy.kron(numpy.eye(self.h + 1, k=-1), self.Ad)
+        self.BB = numpy.kron(numpy.vstack([numpy.zeros(self.h), numpy.eye(self.h)]), self.Bd)
+        self.xZero = numpy.hstack([-self.x0, numpy.zeros(self.h * self.nx)])
+
+    def get_dynamics_constraints(self):
+        """Returns the constraints corresponding to the system dynamics. """
+
+        self.xZero[:self.nx] = -self.x0
+
+        constraints = [self.AA * self.x + self.BB * self.u == self.xZero]
+
+        return constraints
+
+    ####################### METHODS THAT HAVE BEEN FIXED #############################
+
+    def get_input_constraints(self):
+        """Returns the constraints corrseponding to input limits. """
+        AU = numpy.eye(self.h*self.nu)
+        upper = numpy.tile(self.umax, self.h)
+        lower = numpy.tile(self.umin, self.h)
+
+        constraints = [AU * self.u <= upper, AU * self.u >= lower]
+
+        return constraints
+
+    def get_state_constraints(self):
+        """Returns the constraints corresponding to state limits. """
+        AX = numpy.eye((self.h + 1) * self.nx)
+
+        upper = numpy.tile(self.xmax, self.h + 1)
+        lower = numpy.tile(self.xmin, self.h + 1)
+
+        constraints = [AX * self.x <= upper, AX * self.x >= lower]
+
+        return constraints
+
+    ###################### IRRELEVANT? #############################
+
+    def get_backup_predicted_state(self):
+        """Returns a predicted state trajectory over one horizon. Used if there
+        is no optimal trajectory available from the MPC solver. """
+        state = numpy.zeros(self.h*self.nx)
+        state[0::2] = self.x0[0]
+        state[1::2] = self.x0[1] + self.x0[0]*self.dt*numpy.arange(self.h)
+
+        return state
 
     def compute_references(self, s0, v_opt):
         """Computes the different reference signals. """
@@ -233,79 +325,9 @@ class TruckMPC(object):
 
         return c
 
-    def get_state_reference_cost(self):
-        PQ = numpy.kron(numpy.eye(self.h + 1), (1 - self.zeta) * self.Q)
-        PQ_ch = numpy.linalg.cholesky(PQ)
-
-        cost = cvxpy.sum_entries(cvxpy.square(PQ_ch * (self.x - self.xref)))
-
-        return cost
-
-    def get_input_reference_cost(self):
-        PR = numpy.kron(numpy.eye(self.h), self.R)
-        PR_ch = numpy.linalg.cholesky(PR)
-
-        cost = cvxpy.sum_entries(cvxpy.square(PR_ch * (self.u - self.uref)))
-
-        return cost
-
-    def get_dynamics_constraints(self):
-        AA = numpy.kron(numpy.eye(self.h + 1), -numpy.eye(self.nx)) + \
-             numpy.kron(numpy.eye(self.h + 1, k=-1), self.Ad)
-        BB = numpy.kron(numpy.vstack([numpy.zeros(self.h), numpy.eye(self.h)]),
-                        self.Bd)
-        xZero = numpy.hstack([-self.x0, numpy.zeros(self.h * self.nx)])
-
-        constraints = [AA * self.x + BB * self.u == xZero]
-
-        return constraints
-
-    def get_input_constraints(self):
-        AU = numpy.eye(self.h*self.nu)
-        upper = numpy.tile(self.umax, self.h)
-        lower = numpy.tile(self.umin, self.h)
-
-        constraints = [AU * self.u <= upper, AU * self.u >= lower]
-
-        return constraints
-
-    def get_state_constraints(self):
-        AX = numpy.eye((self.h + 1) * self.nx)
-
-        upper = numpy.tile(self.xmax, self.h + 1)
-        lower = numpy.tile(self.xmin, self.h + 1)
-
-        constraints = [AX * self.x <= upper, AX * self.x >= lower]
-
-        return constraints
-
-    def get_timegap_cost(self):
-        shift = int(round(self.timegap / self.dt))
-        xgapref = self.preceding_x[
-                       (self.h*self.saved_h - shift)*self.nx:
-                       (self.h*(self.saved_h + 1) - shift + 1)*self.nx]
-
-        PQ = numpy.kron(numpy.eye(self.h + 1), self.zeta * self.Q)
-        PQ_ch = numpy.linalg.cholesky(PQ)
-
-        cost = cvxpy.sum_entries(cvxpy.square(PQ_ch * (self.x - xgapref)))
-
-        return cost
-
-    def get_safety_constraints(self):
-        pos = self.preceding_x[
-              (self.h*self.saved_h - 1) * self.nx:
-              (self.h*(self.saved_h + 1)) * self.nx][1::2]
-        posmax = pos - self.truck_length - self.safety_distance
-        vmax = numpy.ones(self.h + 1)*self.inf
-
-        statemax = self.interleave_vectors(vmax, posmax)
-
-        AS = numpy.eye((self.h + 1)*self.nx)
-
-        constraints = [AS * self.x <= statemax]
-
-        return constraints
+    def set_leader(self, is_leader):
+        """Set the vehicle to be the leader or not. Default is false. """
+        self.is_leader = is_leader
 
 
 def main():
@@ -313,3 +335,29 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
