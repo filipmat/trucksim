@@ -2,11 +2,21 @@ import numpy
 import sys
 import math
 import time
+from matplotlib import pyplot
 
 import speed
 import truckmpc
 import frenet_unicycle
 import path
+
+
+def print_numpy(a):
+    str = '['
+    for v in a.flatten():
+        str += ' {:.2f}'.format(v)
+    str += ' ]'
+
+    print(str)
 
 
 class SimMPC(object):
@@ -26,6 +36,17 @@ class SimMPC(object):
         self.saved_h = saved_h
 
         self.time_average = 0
+        self.total_elapsed_time = 0
+
+        self.verbose = False
+
+        self.timegap = timegap
+
+        self.positions = numpy.zeros((len(self.vehicles), runs))
+        self.velocities = numpy.zeros((len(self.vehicles), runs))
+        self.accelerations = numpy.zeros((len(self.vehicles), runs))
+        self.timegaps = numpy.zeros((len(self.vehicles), runs))
+        self.path_errors = numpy.zeros((len(self.vehicles), runs))
 
         self.mpcs = [None for i in self.vehicles]
         for i, vehicle in enumerate(self.vehicles):
@@ -46,14 +67,15 @@ class SimMPC(object):
         self.startup()
         start_time = time.time()
         self.run_controller()
-        self.time_average = (time.time() - start_time)/self.runs
+        self.total_elapsed_time = time.time() - start_time
         self.finish()
 
     def finish(self):
-        s = 'Simulation finished'
+        s = 'Simulation finished.'
         s += '\nSimulated time = {:.2f}s'.format(self.runs*self.dt)
         s += ', iterations = {}, average iteration time = {:.4f}s'.format(
-            self.runs, self.time_average)
+            self.runs, self.total_elapsed_time/self.runs)
+        s += '\nTotal elapsed time = {:.2f}s'.format(self.total_elapsed_time)
 
         print(s)
 
@@ -105,6 +127,7 @@ class SimMPC(object):
                 s += '\nID = {}, s = {:.2f}, v = {:.2f} ({:.2f}), a = {:.2f}'.format(
                     vehicle.ID, path_pos, vel, opt_v, acc)
 
+                timegap = 0
                 if j > 0:
                     distance = self.vehicles[j - 1].get_path_pos() - path_pos
                     try:
@@ -114,13 +137,76 @@ class SimMPC(object):
 
                     s += ', timegap = {:.2f}'.format(timegap)
 
+                self.timegaps[j][k] = timegap
+                self.positions[j][k] = path_pos
+                self.velocities[j][k] = vel
+                self.accelerations[j][k] = acc
+                self.path_errors[j][k] = vehicle.get_error()
+
                 vehicle.update(self.dt)
 
-        print(s)
+        if self.verbose:
+            print(s)
 
     def set_vopt(self, vopt):
         """Sets the optimal speed profile. """
         self.vopt = vopt
+
+    def set_verbose(self, verbose):
+        self.verbose = verbose
+
+    def print_graps(self):
+        kk = numpy.arange(self.runs)
+        tt = kk*self.dt
+
+        pyplot.figure(figsize=(10, 10))
+
+        ax = pyplot.subplot(411)
+        ax.set_title('Speed')
+        ax.set_xlabel('longitudinal position, m')
+        ax.set_ylabel('speed, m/s')
+        for i in range(len(self.vehicles)):
+            pyplot.plot(self.positions[i], self.velocities[i],
+                        label=self.vehicles[i].ID)
+        voptend = numpy.argmax(self.vopt.pos > numpy.max(self.positions))
+        if voptend == 0:
+            voptend = len(self.vopt.pos)
+        pyplot.plot(self.vopt.pos[:voptend], self.vopt.vel[:voptend],
+                    label='reference')
+        pyplot.legend(loc='upper right')
+
+        ax = pyplot.subplot(412)
+        ax.set_title('Acceleration')
+        ax.set_xlabel('longitudinal position, m')
+        ax.set_ylabel('acceleration, m/s/s')
+        for i in range(len(self.vehicles)):
+            pyplot.plot(self.positions[i], self.accelerations[i],
+                        label=self.vehicles[i].ID)
+        pyplot.legend(loc='upper right')
+
+        ax = pyplot.subplot(413)
+        ax.set_title('Timegap to preceding vehicle')
+        ax.set_xlabel('longitudinal position, m')
+        ax.set_ylabel('time, s')
+        ax.set_color_cycle(['orange', 'green', 'red'])
+        for i in range(1, len(self.vehicles)):
+            pyplot.plot(self.positions[i], self.timegaps[i],
+                        label=self.vehicles[i].ID)
+        pyplot.plot(tt, self.timegap * numpy.ones(len(tt)),
+                    label='reference')
+        pyplot.legend(loc='upper right')
+
+        ax = pyplot.subplot(414)
+        ax.set_title('Path lateral distance error')
+        ax.set_xlabel('longitudinal position, m')
+        ax.set_ylabel('distance, m')
+        for i in range(len(self.vehicles)):
+            pyplot.plot(self.positions[i], self.path_errors[i],
+                        label=self.vehicles[i].ID)
+        pyplot.legend(loc='upper right')
+
+        pyplot.tight_layout(pad=0.5, w_pad=0.5, h_pad=2)
+        pyplot.show()
 
 
 def main(args):
@@ -131,30 +217,28 @@ def main(args):
 
     vehicle_ids = ['/' + v_id for v_id in args[1:]]
 
-    horizon = 3
+    horizon = 5
     delta_t = 0.1
     Ad = numpy.array([1., 0., delta_t, 1.]).reshape(2, 2)
     Bd = numpy.array([delta_t, 0.]).reshape(2, 1)
-    zeta = 0.1
-    s0 = 0.
-    v0 = 1.5
-    Q_v = 0.5     # Part of Q matrix for velocity tracking.
-    Q_s = 0.1   # Part of Q matrix for position tracking.
+    zeta = 0.75
+    Q_v = 1     # Part of Q matrix for velocity tracking.
+    Q_s = 0.5   # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0., 0., Q_s]).reshape(2, 2) # State tracking.
-    R_acc = 0.25
+    R_acc = 0.1
     R = numpy.array([1]) * R_acc  # Input tracking.
     v_min = 0.
     v_max = 2.
-    s_min = -1000000.
+    s_min = 0.
     s_max = 1000000.
     acc_min = -0.5
     acc_max = 0.5
-    truck_length = 0.5
-    safety_distance = 0.3
-    timegap = 0.5
+    truck_length = 0.2
+    safety_distance = 0.1
+    timegap = 1
     saved_h = 2
 
-    runs = 100
+    runs = 400
 
     xmin = numpy.array([v_min, s_min])
     xmax = numpy.array([v_max, s_max])
@@ -170,7 +254,7 @@ def main(args):
     opt_v_pts = 1000
     opt_v_max = 1.3
     opt_v_min = 0.7
-    opt_v_period_length = 100
+    opt_v_period_length = 20
     vopt = speed.Speed()
     vopt.generate_sin(opt_v_min, opt_v_max, opt_v_period_length, opt_v_pts)
     vopt.repeating = True
@@ -179,8 +263,10 @@ def main(args):
     pt.gen_circle_path([x_radius, y_radius], points=pts, center=center)
 
     kp = 0.5
-    ki = 0
+    ki = -0.02
     kd = 3
+
+    verbose = False
 
     start_distance = 0.75
     path_len = pt.get_path_length()
@@ -205,7 +291,11 @@ def main(args):
 
     sim.set_vopt(vopt)
 
+    sim.set_verbose(verbose)
+
     sim.run()
+
+    sim.print_graps()
 
 
 if __name__ == '__main__':

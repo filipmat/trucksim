@@ -29,6 +29,10 @@ class FrenetUnicycle(unicycle.Unicycle):
         """Sets the PID parameters of the frenet controller. """
         self.frenet.set_pid(kp, ki, kd)
 
+    def get_error(self):
+        """Returns the distance to the path. """
+        return self.frenet.get_y_error()
+
 
 class PathPosition(object):
     """Class for keeping track of absolute vehicle position on the path.
@@ -40,7 +44,6 @@ class PathPosition(object):
         self.zero_passes = 0
         # Allow backwards travel distance less than a fraction of path length.
         self.backwards_fraction = 1./8
-        print(self.position)
 
     def update_position(self, xy):
         """Updates the position on the path. """
@@ -64,7 +67,6 @@ class PathPosition(object):
                 while (path_positions[i].position >
                        path_positions[i - 1].position):
                     path_positions[i].position -= path_positions[i].path_length
-
 
     def __str__(self):
         return '{:.2f}'.format(self.position)

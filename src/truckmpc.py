@@ -1,16 +1,6 @@
 import numpy
-import scipy.sparse as sparse
 import cvxpy
-import time
 
-import speed
-
-"""
-Position: either position along path, or position measured relative the 
-position of the leader vehicle at the current time instant. 
-"""
-
-# TODO: timegap cost and safety constraint for follower mpcs
 
 class TruckMPC(object):
 
@@ -97,6 +87,8 @@ class TruckMPC(object):
         self.x0 = x0
         self.assumed_x[:self.h * self.saved_h * self.nx] = \
             self.assumed_x[self.nx:(self.h*self.saved_h + 1) * self.nx]
+        self.assumed_x[self.saved_h * self.h * self.nx] = x0[0]
+        self.assumed_x[self.saved_h * self.h * self.nx + 1] = x0[1]
 
     def compute_optimal_trajectories(self, vopt, preceding_x=None):
         """Computes the optimal trajectories using MPC and updates the vehicle
@@ -176,8 +168,10 @@ class TruckMPC(object):
         input_constraints = self.get_input_constraints()
         state_constraints = self.get_state_constraints()
 
-        constraints = dynamics_constraints + input_constraints + \
-                      state_constraints
+        constraints = []
+        constraints += dynamics_constraints
+        constraints += input_constraints
+        constraints += state_constraints
 
         if not self.is_leader:
             safety_constraints = self.get_safety_constraints()
