@@ -6,7 +6,6 @@ from matplotlib import pyplot
 
 import speed
 import truckmpc
-import truckmpc2
 import frenet_unicycle
 import path
 
@@ -26,7 +25,7 @@ class SimMPC(object):
                  Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
                  xmin=None, xmax=None, umin=None, umax=None, x0=None,
-                 runs=20, saved_h=2):
+                 runs=20, saved_h=2, startup_time=1.):
 
         self.vehicles = vehicles
         self.dt = delta_t
@@ -43,6 +42,8 @@ class SimMPC(object):
 
         self.timegap = timegap
 
+        self.startup_time = startup_time
+
         self.positions = numpy.zeros((len(self.vehicles), runs))
         self.velocities = numpy.zeros((len(self.vehicles), runs))
         self.accelerations = numpy.zeros((len(self.vehicles), runs))
@@ -56,7 +57,7 @@ class SimMPC(object):
                 leader = True
             else:
                 leader = False
-            self.mpcs[i] = truckmpc2.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q,
+            self.mpcs[i] = truckmpc.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q,
                                              R, truck_length, safety_distance,
                                              timegap, xmin=xmin, xmax=xmax,
                                              umin=umin, umax=umax, x0=x0,
@@ -90,7 +91,7 @@ class SimMPC(object):
 
     def startup(self):
         """Starts by driving a bit without feedback. """
-        samples = int(round(1./self.dt))
+        samples = int(round(self.startup_time/self.dt))
         vopt_avg = self.vopt.get_average()
         startup_acc = vopt_avg/((samples - 1)*self.dt)
 
@@ -230,7 +231,7 @@ def main(args):
 
     vehicle_ids = ['/' + v_id for v_id in args[1:]]
 
-    horizon = 5
+    horizon = 10
     delta_t = 0.1
     Ad = numpy.array([1., 0., delta_t, 1.]).reshape(2, 2)
     Bd = numpy.array([delta_t, 0.]).reshape(2, 1)
@@ -251,7 +252,7 @@ def main(args):
     timegap = 1
     saved_h = 2
 
-    runs = 20
+    runs = 200
 
     xmin = numpy.array([v_min, s_min])
     xmax = numpy.array([v_max, s_max])
@@ -285,23 +286,25 @@ def main(args):
     start_distance = 0.75
     path_len = pt.get_path_length()
 
+    startup_time = 0.5
+
     vehicles = [None for i in vehicle_ids]
 
     for i in range(len(vehicle_ids)):
-        theta = (len(vehicle_ids) - i - 1)*2*math.pi*start_distance/path_len + \
-            0.1
+        theta = (len(vehicle_ids) - i - 1)*2*math.pi*start_distance/path_len + 0.1
+
+        theta = 0.1
 
         x = center[0] + x_radius*math.cos(theta)
         y = center[1] + y_radius*math.sin(theta)
         v = 0
 
         vehicles[i] = frenet_unicycle.FrenetUnicycle(
-            pt, x=[x, y, theta + math.pi/2, v], u=[0, 0], kp=kp, ki=ki, kd=kd,
-            ID=vehicle_ids[i])
+            pt, x=[x, y, theta + math.pi/2, v], u=[0, 0], kp=kp, ki=ki, kd=kd, ID=vehicle_ids[i])
 
-    sim = SimMPC(vehicles, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
-                 safety_distance, timegap, xmin=xmin, xmax=xmax, umin=umin,
-                 umax=umax, runs=runs, saved_h=saved_h)
+    sim = SimMPC(vehicles, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length, safety_distance,
+                 timegap, xmin=xmin, xmax=xmax, umin=umin, umax=umax, runs=runs, saved_h=saved_h,
+                 startup_time=startup_time)
 
     sim.set_vopt(vopt)
 
