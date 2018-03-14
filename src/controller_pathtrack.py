@@ -7,14 +7,20 @@ import time
 import path
 import frenetpid
 import controllerGUI
+from trucksim.msg import vehicleposition
+from trucksim.msg import vehiclespeed
+from trucksim.msg import vehicleomega
+import translator
 
 
 class Controller(object):
     """Class for subscribing to vehicle positions, calculate control input, and
     send commands to the vehicle. """
 
-    def __init__(self, vehicle_id, node_name='controller', v=1., k_p=0., k_i=0., k_d=0.,
-                 delta_t=0.1):
+    def __init__(self, vehicle_id, position_topic_name, position_topic_type,
+                 speed_topic_type, speed_topic_name,
+                 omega_topic_type, omega_topic_name,
+                 v=1., k_p=0., k_i=0., k_d=0., delta_t=0.1):
 
         self.v = v  # Desired velocity of the vehicle.
 
@@ -22,14 +28,18 @@ class Controller(object):
 
         self.running = False  # If controller is running or not.
 
-        self.dt = delta_t
+        self.dt = delta_t   # Used by GUI.
+
+        self.translator = translator.Translator()
 
         # Setup ROS node.
-        rospy.init_node(node_name, anonymous=True)
+        rospy.init_node('controller', anonymous=True)
 
-        # TODO: Subscriber for receiving positions, calls _callback.
+        rospy.Subscriber(position_topic_name, position_topic_type, self._callback)
 
         # TODO: Publisher for publishing control inputs.
+        self.pub_speed = rospy.Publisher(speed_topic_name, speed_topic_type, queue_size=1)
+        self.pub_omega = rospy.Publisher(omega_topic_name, omega_topic_type, queue_size=1)
 
         # Create reference path object.
         self.pt = path.Path()
@@ -42,18 +52,9 @@ class Controller(object):
         print('\nController initialized. Truck {}.\n'.format(self.vehicle_id))
 
     def _callback(self, data):
-        """Called when the subscriber receives data. """
-        # Retrieve data.
-
-        # TODO: Get correct information from topic.
-
-        vehicle_id = data.id
-        x = data.x
-        y = data.y
-        theta = data.theta
-        vel = data.v
-
-        self.pose = [x, y, theta, vel]
+        """Called when the subscriber receives data. Store the vehicle pose. """
+        if data.id == self.vehicle_id:
+            self.pose = [data.x, data.y, data.theta, data.v]
 
     def control(self):
         """Perform control actions from received data. Sends new values to truck. """
@@ -61,18 +62,25 @@ class Controller(object):
         if self.running:
             # Get control input.
             omega = self.frenet.get_omega(self.pose[0], self.pose[1], self.pose[2], self.pose[3])
+            speed = self.v
 
             # Publish control commands to the topic.
-            # TODO: Translate and send control inputs to vehicle.
+            # TODO: Send translated inputs to the vehicle.
+            omega_pwm = self.translator.get_omega_value(self.pose[3], omega)
+            speed_pwm = self.translator.get_speed_value(speed)
+
+            self.pub_omega.publish(self.vehicle_id, omega)
+            self.pub_speed.publish(self.vehicle_id, speed)
 
             # Display control error.
-            print('Control error: {:.3f}'.format(self.frenet.get_y_error()))
+            print('Control error: {:5.2f}'.format(self.frenet.get_y_error()))
 
     def stop(self):
         """Stops/pauses the controller. """
-        t = 0.5
 
         # TODO: Stop the vehicle.
+        self.pub_speed.publish(self.vehicle_id, 0)
+        self.pub_omega.publish(self.vehicle_id, 0)
 
         if self.running:
             self.running = False
@@ -117,15 +125,25 @@ class Controller(object):
 
 def main(args):
     # ID of the vehicle.
-    vehicle_id = '/' + args[1]
+    if len(args) > 1:
+        vehicle_id = args[1]
+    else:
+        print('Need to enter a vehicle ID. ')
+        sys.exit()
 
-    # Name of ROS node.
-    node_name = 'controller'
+    position_topic_name = 'vehicle_position'
+    position_topic_type = vehicleposition
+
+    # TODO: Topic information for sending data.
+    speed_topic_name = 'vehicle_speed'
+    speed_topic_type = vehiclespeed
+    omega_topic_name = 'vehicle_omega'
+    omega_topic_type = vehicleomega
 
     # Data for controller reference path.
     x_radius = 1.7
     y_radius = 1.2
-    center = [0.3, -1.3]
+    center = [0, -y_radius]
 
     # Constant velocity of vehicle.
     v = 1
@@ -138,8 +156,11 @@ def main(args):
     delta_t = 0.1
 
     # Initialize controller.
-    controller = Controller(vehicle_id, node_name,
-        v=v, k_p=k_p, k_i=k_i, k_d=k_d, delta_t=delta_t)
+    controller = Controller(vehicle_id,
+                            position_topic_name, position_topic_type,
+                            speed_topic_type, speed_topic_name,
+                            omega_topic_type, omega_topic_name,
+                            v=v, k_p=k_p, k_i=k_i, k_d=k_d, delta_t=delta_t)
 
     # Set reference path.
     controller.set_reference_path([x_radius, y_radius], center)

@@ -9,12 +9,12 @@ import math
 import sys
 
 
-class PosePublisher():
-    """Publisher class. Keeps an instance of the mocap or simulation object. """
+class PosePublisher(object):
+    """Publisher class for vehicle pose from MoCap data. """
 
-    def __init__(self, topic_type, topic_name, mocap_vehicle_id, mocap_host_address,
+    def __init__(self, topic_name, topic_type, mocap_vehicle_id, mocap_host_address,
                  update_freq=20, moving_average=1,
-                 mocap_used=True, sim_alpha0=0.75, sim_radius=None, sim_center=None):
+                 mocap_used=True, sim_omega=0.75, sim_radius=None, sim_center=None):
 
         self.mocap_vehicle_id = mocap_vehicle_id
         self.mocap_used = mocap_used
@@ -31,39 +31,44 @@ class PosePublisher():
         rospy.init_node(self.mocap_vehicle_id, anonymous=True)
 
         self.rate = rospy.Rate(update_freq)
-        self.total_time_elapsed = 0
-        self.node_init_time = time.time()
-        self.last_update_time = time.time()
+
+        self.node_init_time = 0
+        self.last_update_time = 0
 
         print('Pose publisher initialized for vehicle {}'.format(self.mocap_vehicle_id))
 
         if self.mocap_used:
             self.vehicle = MoCapVehicle(mocap_host_address, self.mocap_vehicle_id)
         else:
-            self.vehicle = CircleVehicle(sim_alpha0, 0, sim_radius, sim_center)
+            self.vehicle = CircleVehicle(sim_omega, 0, sim_radius, sim_center)
             print('Using simulated vehicle. ')
 
     def start(self):
+        """Starts the publisher. """
         print('Publisher running...')
+        self.node_init_time = time.time()
+        self.last_update_time = time.time()
+
         self._talker()
 
     def _talker(self):
         """Publishes the mocap or simulated data continuously to the topic. """
         while not rospy.is_shutdown():
 
-            self.total_time_elapsed = time.time() - self.node_init_time
+            total_time_elapsed = time.time() - self.node_init_time
 
             if not self.mocap_used:
-                self.vehicle.update_pose(self.total_time_elapsed)
+                self.vehicle.update_pose(total_time_elapsed)   # Update simulated position.
 
             try:
                 x, y, yaw = self.vehicle.get_pose()  # Get position.
                 self._update_pose(x, y, yaw)
             except:
-                print('{:.1f}: Lost data.'.format(self.total_time_elapsed))
+                print('{:.1f}: Lost data.'.format(total_time_elapsed))
 
-            # Publish data to the topic and sleep.
+            # Publish vehicle pose to the topic.
             self.pub.publish(self.mocap_vehicle_id, self.x, self.y, self.theta, self.v)
+
             self.rate.sleep()
 
     def _update_pose(self, x, y, yaw):
@@ -78,7 +83,7 @@ class PosePublisher():
         self.theta = yaw
 
 
-class MoCapVehicle:
+class MoCapVehicle(object):
     """Class for getting data from Mocap. """
     def __init__(self, host_address, vehicle_id):
         self.mocap = Mocap(host=host_address, info=1)
@@ -94,7 +99,7 @@ class MoCapVehicle:
         return x, y, yaw*math.pi/180
 
 
-class MovingAverage:
+class MovingAverage(object):
     """Class for calculating a moving average. """
     def __init__(self, N):
         """N: how many numbers that should be averaged. """
@@ -130,7 +135,7 @@ class MovingAverage:
         return self.ma
 
 
-class CircleVehicle():
+class CircleVehicle(object):
     """Class for a simulated vehicle driving in a circle. Does not accept inputs, only supplies
     its position. """
     def __init__(self, omega=0.75, alpha0=0., radius=None, offset=None):
@@ -174,29 +179,31 @@ def main(args):
         sys.exit()
 
     try:
-        if int(args[2]) == 0:
+        if int(args[2]) == 0:   # If the second argument is zero a simulated vehicle will be used.
             mocap_used = False
     except:
         pass
 
-    freq = 20               # Publishing frequency in Hz.
+    freq = 10               # Publishing frequency in Hz.
     moving_average_num = 1  # How many values to use for moving average calculation of velocity.
 
     # Publisher node info.
-    topic_name = 'vehicle_position'
-    topic_type = vehicleposition
+    topic_name = 'vehicle_position' # Name of ROS topic.
+    topic_type = vehicleposition    # Type of ROS topic.
 
-    mocap_address = '192.168.1.10'
+    mocap_address = '192.168.1.10'  # IP-address of the MoCap computer.
 
-    sim_alpha0 = 0.75         # Angular velocity of simulated trucks.
-    sim_radius = [1.7, 1.2]   # Radii of simulated trucks ellipse path.
-    sim_center = [0.3, -1.3]  # Center of simulated trucks ellipse path.
+    # Data if using a simulated vehicle for testing.
+    sim_omega = 0.75         # Angular velocity of vehicle.
+    sim_radius = [1.3, 1.7]   # Radii of ellipse path.
+    sim_center = [0.3, -1.3]  # Center of ellipse path.
 
     # Create and run the publisher.
-    publisher = PosePublisher(topic_type, topic_name, mocap_vehicle_id, mocap_address,
-                         update_freq=freq, moving_average=moving_average_num, mocap_used=mocap_used,
-                         sim_alpha0=sim_alpha0, sim_radius=sim_radius, sim_center=sim_center)
-    publisher.start()
+    publisher = PosePublisher(topic_name, topic_type, mocap_vehicle_id, mocap_address,
+                              update_freq=freq, moving_average=moving_average_num, mocap_used=mocap_used,
+                              sim_omega=sim_omega, sim_radius=sim_radius, sim_center=sim_center)
+
+    publisher.start()   # Start the publisher.
 
 
 if __name__ == '__main__':

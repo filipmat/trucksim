@@ -806,7 +806,7 @@ def main():
     root = Tk.Tk()
     try:
         truckplot = TruckPlot(root, node_name, topic_type, topic_name,
-                              width=width, height=height, truckl=0.5)
+                              width=width, height=height, truckl=0.5, win_size=500)
 
         truckplot.gen_circle_path([x_radius, y_radius], pts, center=center)
 

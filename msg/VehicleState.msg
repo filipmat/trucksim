@@ -1,0 +1,9 @@
+string name
+float32 x
+float32 y
+float32 yaw
+float32 yaw_rate
+float32 v
+int64 steering_command
+int64 velocity_command
+float32 steering_angle
