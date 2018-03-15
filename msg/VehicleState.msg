@@ -1,9 +1,11 @@
-string name
+string id
 float32 x
 float32 y
 float32 yaw
 float32 yaw_rate
 float32 v
+float32 a
+float32 r
 int64 steering_command
 int64 velocity_command
-float32 steering_angle
+float32 gear_command

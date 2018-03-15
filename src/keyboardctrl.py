@@ -4,10 +4,12 @@ import rospy
 import curses
 import sys
 
+from trucksim.msg import PWM
+
 
 class CursesControl(object):
     """Class for controlling a vehicle with the keyboard. """
-    def __init__(self, node_name, topic_type, topic_name, vehicle_id,
+    def __init__(self, topic_type, topic_name, vehicle_id,
                  velocity_zero, velocity_min, velocity_max, velocity_step,
                  angle_zero, angle_min, angle_max, angle_step):
 
@@ -23,21 +25,26 @@ class CursesControl(object):
         self.angle_max = angle_max
         self.angle_step = angle_step
 
+        self.init_gear_command = 120
+        self.init_gear = 2
+
+        self.gear = self.init_gear
+        self.gear_command = self.init_gear_command
+
         self.h = 7
 
         self.velocity = self.velocity_zero
         self.angle = self.angle_zero
 
         # ROS node for publishing values.
-        rospy.init_node(node_name, anonymous = True)
-        # self.pub = rospy.Publisher(truck_topic_name, truck_topic_type, queue_size = 1)
+        rospy.init_node('keyboard_control', anonymous = True)
+        self.pub = rospy.Publisher(topic_name, topic_type, queue_size = 1)
 
         self.stdscr = curses.initscr()
 
-    def publish_values(self, velocity, angle):
+    def publish_values(self):
         """Publishes the values to the topic. """
-        # self.pub.publish(self.vehicle_id, velocity, angle)
-        pass
+        self.pub.publish(self.velocity, self.angle, self.gear_command)
 
     def run(self):
         """Runs the curses window that captures keypresses. """
@@ -46,12 +53,14 @@ class CursesControl(object):
         self.stdscr.refresh()
 
         self.stdscr.addstr(0, 10, 'Arrow keys or WASD to move vehicle. ')
-        self.stdscr.addstr(1, 10, 'E to stop vehicle. Q to quit program.')
-        self.stdscr.addstr(2, 10, 'Sending to vehicle {}'.format(self.vehicle_id))
+        self.stdscr.addstr(1, 10, 'PGUP/PGDN to change gear. ')
+        self.stdscr.addstr(2, 10, 'E to stop vehicle. Q to quit program.')
+        self.stdscr.addstr(3, 10, 'Sending to vehicle {}.'.format(self.vehicle_id))
         self.stdscr.addstr(self.h + 6, 20, '       ')
 
         self.set_velocity()
         self.set_angle()
+        self.set_gear()
 
         key = ''
         while key != ord('q'):
@@ -60,38 +69,55 @@ class CursesControl(object):
 
             if key == ord('e'):
                 self.reset()
-                # self.publish_values(self.velocity, self.angle)
+                self.publish_values()
 
             if key == curses.KEY_UP or key == ord('w'):
                 self.velocity = self.velocity + self.velocity_step
                 self.set_velocity()
-                # self.publish_values(self.velocity, self.angle)
+                self.publish_values()
 
             elif key == curses.KEY_DOWN or key == ord('s'):
                 self.velocity = self.velocity - self.velocity_step
                 self.set_velocity()
-                # self.publish_values(self.velocity, self.angle)
+                self.publish_values()
 
             if key == curses.KEY_LEFT or key == ord('a'):
-                self.angle = self.angle - self.angle_step
-                self.set_angle()
-                # self.publish_values(self.velocity, self.angle)
-
-            elif key == curses.KEY_RIGHT or key == ord('d'):
                 self.angle = self.angle + self.angle_step
                 self.set_angle()
-                # self.publish_values(self.velocity, self.angle)
+                self.publish_values()
+
+            elif key == curses.KEY_RIGHT or key == ord('d'):
+                self.angle = self.angle - self.angle_step
+                self.set_angle()
+                self.publish_values()
+
+            if key == curses.KEY_NPAGE:
+                self.gear = 1
+                self.set_gear()
+                self.publish_values()
+
+            elif key == curses.KEY_PPAGE:
+                self.gear = 2
+                self.set_gear()
+                self.publish_values()
 
         curses.endwin()
-        #self.publish_values(self.zero_velocity, self.zero_angle)
+
+        self.velocity = self.velocity_zero
+        self.angle = self.angle_zero
+        self.gear_command = self.init_gear_command
+
+        self.publish_values()
 
     def reset(self):
         """Resets to the initial values. """
         self.velocity = self.velocity_zero
         self.angle = self.angle_zero
+        self.gear_command = self.init_gear_command
 
         self.set_velocity()
         self.set_angle()
+        self.set_gear()
 
         self.stdscr.addstr(self.h + 6, 30, 'stopped')
 
@@ -131,6 +157,17 @@ class CursesControl(object):
         self.stdscr.addstr(self.h + 2, 40, '%.2f' % self.angle)
         self.stdscr.addstr(self.h + 6, 30, '       ')
 
+    def set_gear(self):
+        """Sets the gear of the truck. """
+        if self.gear == 1:
+            self.gear_command = 60
+        elif self.gear == 2:
+            self.gear_command = 120 	#120
+
+        self.stdscr.addstr(self.h + 4, 20, 'gear')
+        self.stdscr.addstr(self.h + 4, 40, '%d' % self.gear)
+        self.stdscr.addstr(self.h + 6, 30, '       ')
+
     @staticmethod
     def sign(x):
         if x < 0:
@@ -140,19 +177,28 @@ class CursesControl(object):
 
 
 def main(screen):
-    node_name = 'keyboard_control'
-    topic_type = 'hej'
-    topic_name = 'hej'
+    topic_type = PWM
+    topic_name = 'teleop'
 
-    velocity_zero = 1500
-    velocity_min = 1200
-    velocity_max = 1800
-    velocity_step = -50
+    # velocity_zero = 1500
+    # velocity_min = 1200
+    # velocity_max = 1800
+    # velocity_step = -50
+    #
+    # angle_zero = 1500
+    # angle_min = 1100
+    # angle_max = 1900
+    # angle_step = -100
 
-    angle_zero = 1500
-    angle_min = 1100
-    angle_max = 1900
-    angle_step = -100
+    velocity_zero = 0
+    velocity_min = -4
+    velocity_max = 4
+    velocity_step = 1
+
+    angle_zero = 0
+    angle_min = -4
+    angle_max = 4
+    angle_step = 1
 
     if len(sys.argv) > 1:
         vehicle_id = sys.argv[1]
@@ -160,7 +206,7 @@ def main(screen):
         print('Need to enter a vehicle ID. ')
         sys.exit()
 
-    curses_ctrl = CursesControl(node_name, topic_type, topic_name, vehicle_id,
+    curses_ctrl = CursesControl(topic_type, topic_name, vehicle_id,
                                 velocity_zero, velocity_min, velocity_max, velocity_step,
                                 angle_zero, angle_min, angle_max, angle_step)
     curses_ctrl.run()

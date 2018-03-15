@@ -1,5 +1,3 @@
----
-int64 velocity
-int64 steering
-int64 gear
 int64 log
+---
+int64 response
