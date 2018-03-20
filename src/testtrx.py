@@ -4,17 +4,17 @@ import rospy
 import sys
 import math
 
-from trucksim.msg import MocapState
-from trucksim.msg import PWM
+import trxmodel
+
+from trucksim.msg import MocapState, PWM
+from geometry_msgs.msg import Twist
 
 
 class TestTrxNode(object):
-    """Class for simulating the movement of a vehicle. The vehicle is identified
-    with the name of the ROS node. """
+    """Class for simulating the movement of a vehicle. The vehicle is identified with an ID. """
 
     def __init__(self, vehicle_id,
-                 mocap_topic_name, mocap_topic_type,
-                 control_topic_name, control_topic_type,
+                 mocap_topic_name, mocap_topic_type, control_topic_name, control_topic_type,
                  x=None, u=None, frequency=20):
 
         # Node and topic names and types.
@@ -23,15 +23,17 @@ class TestTrxNode(object):
         if x is None:
             x = [0, 0, 0]
 
-        self.x = x  # Vehicle state.
-        self.u = u  # Vehicle input.
+        self.x = x  # Vehicle state [x, y, yaw].
+        self.u = u  # Vehicle input [speed, angular velocity].
 
-        # Variables used for velocity calculation.
-        self.delta_t = 0  # Stores the update interval.
-        self.last_x = self.x[:]  # Stores the last state.
-        self.v = 0  # Vehicle velocity.
+        self.v = 0
+        self.yaw_rate = 0
+        self.acceleration = 0
+        self.radius = 0
 
-        self.last_x = self.x
+        self.dt = 1. / frequency # Update interval.
+
+        self.last_x = self.x[:]  # Store the last state.
 
         self.vehicle_id = vehicle_id
 
@@ -41,70 +43,68 @@ class TestTrxNode(object):
         # Publisher for publishing vehicle position and velocity.
         self.pub = rospy.Publisher(mocap_topic_name, mocap_topic_type, queue_size=10)
 
+        # Fix so that standing still at start by sending command to itself through trxvehicle.py.
+        self.pwm_start_pub = rospy.Publisher('pwm_commands', PWM, queue_size=1)
+
         # Initialize ROS node.
         rospy.init_node(self.vehicle_id, anonymous=True)
 
         # ROS update rate.
-        self.r = rospy.Rate(frequency)
+        self.update_rate = rospy.Rate(frequency)
 
-        # Update interval.
-        self.delta_t = 1. / frequency
+        self.pwm_start_pub.publish(self.vehicle_id, 1500, 1500, 120)
 
-        print('Vehicle node initialized, id: {}'.format(rospy.get_name()))
+        print('Trx test vehicle initialized, id: {}'.format(rospy.get_name()))
 
     def _callback(self, data):
         """Method called when subscriber receives data. Updates the input if the
         published ID is the same as the ID of the node. """
-        self.u[0] = data.velocity
-        self.u[1] = data.angle
-        self.u[2] = data.gear
+        self.u[0] = trxmodel.throttle_input_to_linear_velocity(data.linear.x)
+        self.u[1] = trxmodel.steering_input_to_angular_velocity(data.angular.z, self.v)
 
     def run(self):
         """Run the simulation. Moves the vehicle and publishes the position. """
         while not rospy.is_shutdown():
-            self.move(self.delta_t)
+            self._move()
 
-            vel = self.get_velocity()
+            self._publish_vehicle_state()
 
-            yaw_rate = self.get_yaw_rate()
+            self.update_rate.sleep()
 
-            self.pub.publish(self.vehicle_id, self.x[0], self.x[1], self.x[2], yaw_rate, vel, 0, 0)
+    def _publish_vehicle_state(self):
+        self.pub.publish(self.vehicle_id, self.x[0], self.x[1], self.x[2], self.yaw_rate,
+                         self.v, self.acceleration, self.radius)
 
-            self.r.sleep()
+    def _move(self):
+        """Moves the vehicle as a unicycle and calculates velocity, yaw rate, etc. """
 
-    def move(self, delta_t):
-        """Moves the vehicle. The vehicle moves as a unicycle. """
-
-        # Save information for velocity calculation.
-        self.last_x = self.x[:]
-        self.delta_t = delta_t
+        self.last_x = self.x[:] # Save information for velocity calculation.
 
         # Move the vehicle according to the dynamics.
-        self.x[0] = self.x[0] + delta_t * self.u[0] * math.cos(self.x[2])
-        self.x[1] = self.x[1] + delta_t * self.u[0] * math.sin(self.x[2])
-        self.x[2] = (self.x[2] + delta_t * self.u[1]) % (2 * math.pi)
+        self.x[0] = self.x[0] + self.dt * self.u[0] * math.cos(self.x[2])
+        self.x[1] = self.x[1] + self.dt * self.u[0] * math.sin(self.x[2])
+        self.x[2] = (self.x[2] + self.dt * self.u[1]) % (2 * math.pi)
 
-    def get_velocity(self):
-        """Returns the velocity of the vehicle. The velocity is calculated
-        using the distance traveled from the last position and the elapsed time
-        from the last movement. The elapsed time is the update interval. """
-        distance = math.sqrt((self.x[0] - self.last_x[0]) ** 2 + (self.x[1] - self.last_x[1]) ** 2)
-
-        # Calculate the velocity.
-        self.v = distance / self.delta_t
-
-        return self.v
-
-    def get_yaw_rate(self):
+        # Calculate yaw rate.
         if self.x[2] < self.last_x[2] - math.pi:
-            theta_diff = self.x[2] - self.last_x[2] + 2 * math.pi
+            yaw_difference = self.x[2] - self.last_x[2] + 2 * math.pi
         elif self.x[2] > self.last_x[2] + math.pi:
-            theta_diff = self.x[2] - self.last_x[2] - 2 * math.pi
+            yaw_difference = self.x[2] - self.last_x[2] - 2 * math.pi
         else:
-            theta_diff = self.x[2] - self.last_x[2]
-        yaw_rate = theta_diff / self.delta_t
+            yaw_difference = self.x[2] - self.last_x[2]
+        self.yaw_rate = yaw_difference / self.dt
 
-        return yaw_rate
+        # Calculate velocity and acceleration.
+        distance = math.sqrt((self.x[0] - self.last_x[0]) ** 2 + (self.x[1] - self.last_x[1]) ** 2)
+        v = distance / self.dt
+        self.acceleration = (v - self.v) / self.dt
+        self.v = v
+
+        # Calculate turning radius.
+        try:
+            self.radius = distance / yaw_difference
+        except ZeroDivisionError:
+            self.radius = 0
 
     def __str__(self):
         """Returns the name of the node as well as the vehicle position. """
@@ -112,24 +112,22 @@ class TestTrxNode(object):
 
 
 def main(args):
-    """Creates a vehicle node and starts the simulation. The name of the vehicle
-    is entered as an argument on the command line. The
-    vehicle is initialized at the origin pointing to the left. """
+    """Creates a vehicle node and starts the simulation. The name of the vehicle is entered as an
+    argument on the command line. The vehicle is initialized at the origin pointing to the left. """
 
     if len(args) < 1:
         print('Need to enter a vehicle ID.')
         sys.exit()
 
     vehicle_id = args[1]
-    frequency = 20
+    frequency = 40
     mocap_topic_name = 'mocap_state'
     mocap_topic_type = MocapState
-    control_topic_name = 'pwm_commands'
-    control_topic_type = PWM
+    control_topic_name = vehicle_id + '/cmd_vel'
+    control_topic_type = Twist
 
-    vn = TestTrxNode(args[1],
-                     mocap_topic_name, mocap_topic_type,
-                     control_topic_name, control_topic_type,
+    vn = TestTrxNode(vehicle_id,
+                     mocap_topic_name, mocap_topic_type, control_topic_name, control_topic_type,
                      [0, 0, math.pi], [0., 0., 1], frequency)
 
     vn.run()

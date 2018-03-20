@@ -13,8 +13,7 @@ class MocapPublisher(object):
     """Publisher class for vehicle pose from MoCap data. """
 
     def __init__(self, topic_name, topic_type, mocap_vehicle_id, mocap_host_address,
-                 update_freq=20, moving_average=1,
-                 mocap_used=True, sim_omega=0.75, sim_radius=None, sim_center=None):
+                 update_freq=20, mocap_used=True, sim_omega=0.75, sim_radius=None, sim_center=None):
 
         self.mocap_vehicle_id = mocap_vehicle_id
         self.mocap_used = mocap_used
@@ -41,6 +40,10 @@ class MocapPublisher(object):
         if self.mocap_used:
             self.vehicle = MoCapVehicle(mocap_host_address, self.mocap_vehicle_id)
         else:
+            if sim_radius is None:
+                sim_radius = [1, 1]
+            if sim_center is None:
+                sim_center = [0, 0]
             self.vehicle = CircleVehicle(sim_omega, 0, sim_radius, sim_center)
             print('Using simulated vehicle. ')
 
@@ -56,25 +59,34 @@ class MocapPublisher(object):
         """Publishes the mocap or simulated data continuously to the topic. """
         while not rospy.is_shutdown():
 
-            total_time_elapsed = time.time() - self.node_init_time
+            total_time_elapsed = time.time() - self.node_init_time  # Time since initialization.
 
             try:
-                x, y, yaw = self.vehicle.get_pose()  # Get position.
+                x, y, yaw = self.vehicle.get_pose()
                 self._update_pose(x, y, yaw)
             except:
                 print('{:.1f}: Lost data.'.format(total_time_elapsed))
 
             # Publish vehicle pose to the topic.
-            self.pub.publish(self.mocap_vehicle_id, self.x, self.y, self.yaw, self.yaw_rate, self.v,
-                             self.a, self.r)
+            self._publish_values()
 
             self.rate.sleep()
+
+    def _publish_values(self):
+        self.pub.publish(self.mocap_vehicle_id, self.x, self.y, self.yaw, self.yaw_rate, self.v,
+                         self.a, self.r)
 
     def _update_pose(self, x, y, yaw):
         """Updates the vehicle pose. Calculates a new velocity by using the old position."""
         elapsed_time = time.time() - self.last_update_time
+
+        # Calculate velocity.
         v = math.sqrt((x - self.x) ** 2 + (y - self.y) ** 2) / elapsed_time
 
+        # Calculate acceleration.
+        acceleration = (v - self.v) / elapsed_time
+
+        # Calculate yaw rate.
         if yaw < self.yaw - math.pi:
             yaw_difference = yaw - self.yaw + 2 * math.pi
         elif yaw > self.yaw + math.pi:
@@ -83,13 +95,13 @@ class MocapPublisher(object):
             yaw_difference = yaw - self.yaw
         yaw_rate = yaw_difference / elapsed_time
 
+        # Calculate turning radius.
         try:
             radius = math.sqrt((x - self.x) ** 2 + (y - self.y) ** 2) / yaw_difference
         except ZeroDivisionError:
             radius = 0
 
-        acceleration = (v - self.v) / elapsed_time
-
+        # Update state.
         self.x = x
         self.y = y
         self.yaw = yaw
@@ -119,7 +131,7 @@ class MoCapVehicle(object):
 
 class CircleVehicle(object):
     """Class for a simulated vehicle driving in a circle. Does not accept inputs, only supplies
-    its position. """
+    its position. Used for testing. """
     def __init__(self, omega=0.75, alpha0=0., radius=None, offset=None):
 
         if radius is None:
@@ -164,13 +176,12 @@ def main(args):
         sys.exit()
 
     try:
-        if int(args[2]) == 0:   # If the second argument is zero a simulated vehicle will be used.
+        if int(args[2]) == 1:   # If the second argument is zero a simulated vehicle will be used.
             mocap_used = False
     except:
         pass
 
     freq = 20               # Publishing frequency in Hz.
-    moving_average_num = 1  # How many values to use for moving average calculation of velocity.
 
     # Publisher node info.
     topic_name = 'mocap_state' # Name of ROS topic.
@@ -185,8 +196,7 @@ def main(args):
 
     # Create and run the publisher.
     publisher = MocapPublisher(topic_name, topic_type, mocap_vehicle_id, mocap_address,
-                               update_freq=freq, moving_average=moving_average_num,
-                               mocap_used=mocap_used,
+                               update_freq=freq, mocap_used=mocap_used,
                                sim_omega=sim_omega, sim_radius=sim_radius, sim_center=sim_center)
 
     publisher.start()   # Start the publisher.

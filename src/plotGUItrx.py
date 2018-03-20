@@ -21,8 +21,7 @@ import path
 class TruckPlot(object):
     """Class for GUI that plots the truck trajectories. """
 
-    # noinspection PyPep8
-    def __init__(self, root, node_name, topic_type, topic_name,
+    def __init__(self, root, topic_type, topic_name,
                  filename='record', width=5, height=5, win_size=600,
                  clear_seconds=180, inactivity_time_limit=20, truckl = 0.4):
         """
@@ -43,9 +42,6 @@ class TruckPlot(object):
         self.filename_prefix = filename
         self.display_tail = False
         self.display_path = False
-        self.node_name = node_name  # Subscriber node name.
-        self.topic_name = topic_name  # Subscriber topic name.
-        self.topic_type = topic_type  # Subscriber topic type.
 
         # Reference path.
         self.pt = path.Path()
@@ -93,8 +89,8 @@ class TruckPlot(object):
         self.truck_zoom_scale = 1.25
 
         # Setup subscriber node.
-        rospy.init_node(self.node_name, anonymous=True)
-        rospy.Subscriber(self.topic_name, self.topic_type, self._callback)
+        rospy.init_node('plotGUI', anonymous=True)
+        rospy.Subscriber(topic_name, topic_type, self._callback)
 
         # Base frame.
         s_frame = Tk.Frame(self.root, background=bg_color)
@@ -793,21 +789,21 @@ class TruckPlot(object):
 
 
 def main(args):
-    node_name = 'plot'  # Name of node.
     topic_name = 'mocap_state'  # Name of topic the node subscribes to.
-    topic_type = MocapState  # The type of the topic.
+    topic_type = MocapState     # The type of the topic.
 
-    width = 6  # Width in meters of displayed area.
-    height = 6  # Height in meters.
-    x_radius = 1.70  # Ellipse x-radius.
-    y_radius = 1.20  # Ellipse y-radius.
-    center = [0, -y_radius]  # The coordinates of the center of the ellipse.
-    pts = 200  # Number of points on displayed reference path.
+    width = 6               # Width in meters of displayed area.
+    height = 6              # Height in meters.
+    x_radius = 1.70         # Ellipse x-radius.
+    y_radius = 1.20         # Ellipse y-radius.
+    center = [0, -y_radius] # The coordinates of the center of the ellipse.
+    pts = 200               # Number of points on displayed reference path.
+    win_size = 500          # Size of window in pixels.
 
     root = Tk.Tk()
     try:
-        truckplot = TruckPlot(root, node_name, topic_type, topic_name,
-                              width=width, height=height, truckl=0.5, win_size=500)
+        truckplot = TruckPlot(root, topic_type, topic_name,
+                              width=width, height=height, truckl=0.5, win_size=win_size)
 
         truckplot.gen_circle_path([x_radius, y_radius], pts, center=center)
 

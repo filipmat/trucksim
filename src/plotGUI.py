@@ -4,7 +4,7 @@
 # the truck positions are published.
 
 # TODO
-# Add/fix recording of data.
+# Add, fix or remove recording of data.
 
 import rospy
 import time
@@ -21,7 +21,7 @@ class TruckPlot(object):
     """Class for GUI that plots the truck trajectories. """
 
     # noinspection PyPep8
-    def __init__(self, root, node_name, topic_type, topic_name,
+    def __init__(self, root, topic_type, topic_name,
                  filename='record', width=5, height=5, win_size=600,
                  clear_seconds=180, inactivity_time_limit=20, truckl = 0.4):
         """
@@ -42,9 +42,6 @@ class TruckPlot(object):
         self.filename_prefix = filename
         self.display_tail = False
         self.display_path = False
-        self.node_name = node_name  # Subscriber node name.
-        self.topic_name = topic_name  # Subscriber topic name.
-        self.topic_type = topic_type  # Subscriber topic type.
 
         # Reference path.
         self.pt = path.Path()
@@ -92,8 +89,8 @@ class TruckPlot(object):
         self.truck_zoom_scale = 1.25
 
         # Setup subscriber node.
-        rospy.init_node(self.node_name, anonymous=True)
-        rospy.Subscriber(self.topic_name, self.topic_type, self._callback)
+        rospy.init_node('plotGUI', anonymous=True)
+        rospy.Subscriber(topic_name, topic_type, self._callback)
 
         # Base frame.
         s_frame = Tk.Frame(self.root, background=bg_color)
@@ -295,6 +292,24 @@ class TruckPlot(object):
         entry = Tk.Entry(self.root, width=9, **options)
         entry.pack(in_=frame, side=Tk.LEFT)
 
+    def _callback(self, data):
+        """Subscriber callback method. Called when receiving data on the topic.
+        Moves the vehicle corresponding to the id in the data or creates a new
+        vehicle if it does not exist. """
+        vehicle_id = data.id
+        x = data.x
+        y = data.y
+        theta = data.theta
+
+        try:
+            self._move_truck(vehicle_id, x, y, theta)
+            self._draw_tail(vehicle_id, x, y, theta)
+        except KeyError:
+            self._create_new_truck(vehicle_id, x, y, theta)
+
+        # Store last time data was published in order to check inactivity.
+        self.last_published_time[vehicle_id] = time.time()
+
     def _set_area_size(self, width=None, height=None):
         """Sets the width and height of the drawable area in meters. """
         if width is not None:
@@ -363,24 +378,6 @@ class TruckPlot(object):
         """Quits the GUI. """
         print('Quitting.')
         self.root.quit()
-
-    def _callback(self, data):
-        """Subscriber callback method. Called when receiving data on the topic.
-        Moves the vehicle corresponding to the id in the data or creates a new
-        vehicle if it does not exist. """
-        vehicle_id = data.id
-        x = data.x
-        y = data.y
-        theta = data.theta
-
-        try:
-            self._move_truck(vehicle_id, x, y, theta)
-            self._draw_tail(vehicle_id, x, y, theta)
-        except KeyError:
-            self._create_new_truck(vehicle_id, x, y, theta)
-
-        # Store last time data was published in order to check inactivity.
-        self.last_published_time[vehicle_id] = time.time()
 
     def _move_truck(self, vehicle_id, x, y, theta):
         """Moves a truck triangle to the new position. """
@@ -792,7 +789,6 @@ class TruckPlot(object):
 
 
 def main():
-    node_name = 'plot'  # Name of node.
     topic_name = 'vehicle_position'  # Name of topic the node subscribes to.
     topic_type = vehicleposition  # The type of the topic.
 
@@ -805,7 +801,7 @@ def main():
 
     root = Tk.Tk()
     try:
-        truckplot = TruckPlot(root, node_name, topic_type, topic_name,
+        truckplot = TruckPlot(root, topic_type, topic_name,
                               width=width, height=height, truckl=0.5, win_size=500)
 
         truckplot.gen_circle_path([x_radius, y_radius], pts, center=center)

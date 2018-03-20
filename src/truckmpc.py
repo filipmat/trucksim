@@ -3,6 +3,15 @@ import cvxpy
 import scipy.sparse as sparse
 
 
+def print_numpy(a):
+    s = '['
+    for v in a.flatten():
+        s += ' {:.2f}'.format(v)
+    s += ' ]'
+
+    print(s)
+
+
 class TruckMPC(object):
 
     def __init__(self, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
@@ -80,7 +89,6 @@ class TruckMPC(object):
         self.preceding_x = numpy.zeros(self.h * (self.saved_h + 1) * self.nx)
 
         # Problem
-
         self.prob = cvxpy.Problem(cvxpy.Minimize(1))
 
         state_constraint1, state_constraint2 = self.get_state_constraints() # Fixed.
@@ -104,9 +112,9 @@ class TruckMPC(object):
         self.PR_ch = numpy.linalg.cholesky(
             numpy.kron(numpy.eye(self.h), self.R))
 
-        self.state_P = self.get_state_P()
-        self.input_P = self.get_input_P()
-        self.timegap_P = self.get_timegap_P()
+        # self.state_P = self.get_state_P()
+        # self.input_P = self.get_input_P()
+        # self.timegap_P = self.get_timegap_P()
 
 
     def get_state_constraints(self):
@@ -322,17 +330,17 @@ class TruckMPC(object):
         """Set the vehicle to be the leader or not. Default is false. """
         self.is_leader = is_leader
 
-    def get_state_P(self):
-        P = sparse.kron(sparse.eye(self.h + 1), (1 - self.zeta)*self.Q)
-        return P
-
-    def get_input_P(self):
-        P = sparse.kron(sparse.eye(self.h), self.R)
-        return P
-
-    def get_timegap_P(self):
-        P = sparse.kron(sparse.eye(self.h + 1), self.zeta*self.Q)
-        return P
+    # def get_state_P(self):
+    #     P = sparse.kron(sparse.eye(self.h + 1), (1 - self.zeta)*self.Q)
+    #     return P
+    #
+    # def get_input_P(self):
+    #     P = sparse.kron(sparse.eye(self.h), self.R)
+    #     return P
+    #
+    # def get_timegap_P(self):
+    #     P = sparse.kron(sparse.eye(self.h + 1), self.zeta*self.Q)
+    #     return P
 
 
 def main():

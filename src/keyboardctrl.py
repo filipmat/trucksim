@@ -44,7 +44,7 @@ class CursesControl(object):
 
     def publish_values(self):
         """Publishes the values to the topic. """
-        self.pub.publish(self.velocity, self.angle, self.gear_command)
+        self.pub.publish(self.vehicle_id, self.velocity, self.angle, self.gear_command)
 
     def run(self):
         """Runs the curses window that captures keypresses. """
@@ -71,7 +71,7 @@ class CursesControl(object):
                 self.reset()
                 self.publish_values()
 
-            if key == curses.KEY_UP or key == ord('w'):
+            elif key == curses.KEY_UP or key == ord('w'):
                 self.velocity = self.velocity + self.velocity_step
                 self.set_velocity()
                 self.publish_values()
@@ -81,7 +81,7 @@ class CursesControl(object):
                 self.set_velocity()
                 self.publish_values()
 
-            if key == curses.KEY_LEFT or key == ord('a'):
+            elif key == curses.KEY_LEFT or key == ord('a'):
                 self.angle = self.angle + self.angle_step
                 self.set_angle()
                 self.publish_values()
@@ -91,7 +91,7 @@ class CursesControl(object):
                 self.set_angle()
                 self.publish_values()
 
-            if key == curses.KEY_NPAGE:
+            elif key == curses.KEY_NPAGE:
                 self.gear = 1
                 self.set_gear()
                 self.publish_values()
@@ -178,27 +178,27 @@ class CursesControl(object):
 
 def main(screen):
     topic_type = PWM
-    topic_name = 'teleop'
+    topic_name = 'pwm_commands'
 
-    # velocity_zero = 1500
-    # velocity_min = 1200
-    # velocity_max = 1800
-    # velocity_step = -50
+    # velocity_zero = 0
+    # velocity_min = -4
+    # velocity_max = 4
+    # velocity_step = 1
     #
-    # angle_zero = 1500
-    # angle_min = 1100
-    # angle_max = 1900
-    # angle_step = -100
+    # angle_zero = 0
+    # angle_min = -4
+    # angle_max = 4
+    # angle_step = 1
 
-    velocity_zero = 0
-    velocity_min = -4
-    velocity_max = 4
-    velocity_step = 1
+    velocity_zero = 1500
+    velocity_min = 900
+    velocity_max = 2100
+    velocity_step = -20
 
-    angle_zero = 0
-    angle_min = -4
-    angle_max = 4
-    angle_step = 1
+    angle_zero = 1500
+    angle_min = 900
+    angle_max = 2100
+    angle_step = 20
 
     if len(sys.argv) > 1:
         vehicle_id = sys.argv[1]

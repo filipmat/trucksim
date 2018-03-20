@@ -7,8 +7,9 @@ import time
 import path
 import frenetpid
 import controllerGUI
+import trxmodel
+
 from trucksim.msg import MocapState, PWM
-import translator
 
 
 class Controller(object):
@@ -17,27 +18,30 @@ class Controller(object):
 
     def __init__(self, vehicle_id, position_topic_name, position_topic_type,
                  pwm_topic_type, pwm_topic_name,
-                 v=1., k_p=0., k_i=0., k_d=0., delta_t=0.1):
+                 v_ref=1., k_p=0., k_i=0., k_d=0., delta_t=0.1):
 
-        self.v = v  # Desired velocity of the vehicle.
+        self.v_ref = v_ref              # Desired velocity of the vehicle.
 
-        self.vehicle_id = vehicle_id  # ID of the vehicle.
+        self.vehicle_id = vehicle_id    # ID of the vehicle.
 
-        self.running = False  # If controller is running or not.
+        self.running = False            # If controller is running or not.
 
-        self.dt = delta_t   # Used by GUI.
+        self.dt = delta_t               # Control rate, used by GUI.
 
-        self.translator = translator.Translator()
-
-        self.gear_command = 120
         self.zero_velocity_pwm = 1500
         self.zero_angle_pwm = 1500
+        self.gear_command = 120         # UNUSED.
+
+        self.speed_pwm = self.zero_velocity_pwm
+        self.angle_pwm = self.zero_angle_pwm
 
         # Setup ROS node.
         rospy.init_node('controller', anonymous=True)
 
+        # Subscribe to topic that publishes vehicle position.
         rospy.Subscriber(position_topic_name, position_topic_type, self._callback)
 
+        # Publish vehicle pwm commands.
         self.pub_pwm = rospy.Publisher(pwm_topic_name, pwm_topic_type, queue_size=1)
 
         # Create reference path object.
@@ -46,6 +50,7 @@ class Controller(object):
         # Create frenet controller.
         self.frenet = frenetpid.FrenetPID(self.pt, k_p, k_i, k_d)
 
+        # Keep track of the most recent vehicle pose.
         self.pose = [0., 0., 0., 0.]
 
         print('\nController initialized. Truck {}.\n'.format(self.vehicle_id))
@@ -61,22 +66,28 @@ class Controller(object):
         if self.running:
             # Get control input.
             omega = self.frenet.get_omega(self.pose[0], self.pose[1], self.pose[2], self.pose[3])
-            speed = self.v
+            speed = self.v_ref
 
-            # TODO: Fix translation to PWM values.
-            angle_pwm = omega # self.translator.get_omega_value(self.pose[3], omega)
-            speed_pwm = speed # self.translator.get_speed_value(speed)
+            self.angle_pwm = trxmodel.angular_velocity_to_steering_input(omega, speed)
+            self.speed_pwm = trxmodel.linear_velocity_to_throttle_input(speed)
 
             # Publish control commands to the topic.
-            self.pub_pwm.publish(speed_pwm, angle_pwm, self.gear_command)
+            self.publish_values()
 
             # Display control error.
             print('Control error: {:5.2f}'.format(self.frenet.get_y_error()))
 
+    def publish_values(self):
+        """Publish the control values to the topic. """
+        self.pub_pwm.publish(self.vehicle_id, self.speed_pwm, self.angle_pwm, self.gear_command)
+
     def stop(self):
         """Stops/pauses the controller. """
+        self.speed_pwm = self.zero_velocity_pwm
 
-        self.pub_pwm.publish(self.zero_velocity_pwm, self.zero_angle_pwm, self.gear_command)
+        self.publish_values()
+        time.sleep(0.05)
+        self.publish_values()
 
         if self.running:
             self.running = False
@@ -110,7 +121,7 @@ class Controller(object):
 
     def set_speed(self, v):
         """Sets the vehicle speed. """
-        self.v = v
+        self.v_ref = v
 
     def get_adjustables(self):
         return [], []
@@ -139,25 +150,25 @@ def main(args):
     center = [0, -y_radius]
 
     # Constant velocity of vehicle.
-    v = 1
+    v_ref = 1
 
-    # PID parameters.
+    # PID parameters for path tracking.
     k_p = 0.5
     k_i = -0.02
     k_d = 3
 
-    delta_t = 0.1
+    delta_t = 0.1   # Update interval.
 
     # Initialize controller.
     controller = Controller(vehicle_id,
                             position_topic_name, position_topic_type,
                             pwm_topic_type, pwm_topic_name,
-                            v=v, k_p=k_p, k_i=k_i, k_d=k_d, delta_t=delta_t)
+                            v_ref=v_ref, k_p=k_p, k_i=k_i, k_d=k_d, delta_t=delta_t)
 
     # Set reference path.
     controller.set_reference_path([x_radius, y_radius], center)
 
-    # Start controller.
+    # Start controller in a GUI.
     ctrl_gui = controllerGUI.ControllerGUI(controller)
 
 
