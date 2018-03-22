@@ -56,6 +56,7 @@ add_message_files(
     PWM.msg
     MocapState.msg
     VehicleState.msg
+    AssumedState.msg
 )
 
 ## Generate services in the 'srv' folder

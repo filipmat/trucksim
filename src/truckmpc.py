@@ -360,30 +360,18 @@ class TruckMPC(object):
 
         return P
 
-    def get_state_q(self):
-        q = self.state_Q_diag.dot(self.xref)
-
-        return q
-
-    def get_input_q(self):
-        q = self.R_diag.dot(self.acc_ref)
-
-        return q
-
-    def get_timegap_q(self):
-        xgapref = self.preceding_x[
-                  (self.h * self.saved_h - self.timegap_shift) * self.nx:
-                  (self.h * (self.saved_h + 1) - self.timegap_shift + 1) * self.nx]
-        q = self.timegap_Q_diag.dot(xgapref)
-
-        return q
-
     def get_mpc_cost_quad_form(self):
-        cost = 0.5*cvxpy.quad_form(self.x, self.state_P) + self.get_state_q()*self.x + \
-            0.5*cvxpy.quad_form(self.u, self.input_P) + self.get_input_q()*self.u
+        cost = 0.5*cvxpy.quad_form(self.x, self.state_P) + \
+               self.state_Q_diag.dot(self.xref)*self.x + \
+               0.5*cvxpy.quad_form(self.u, self.input_P) + self.R_diag.dot(self.acc_ref)*self.u
 
         if not self.is_leader:
-            cost = cost + 0.5*cvxpy.quad_form(self.x, self.timegap_P) + self.get_timegap_q()*self.x
+            xgapref = self.preceding_x[
+                      (self.h * self.saved_h - self.timegap_shift) * self.nx:
+                      (self.h * (self.saved_h + 1) - self.timegap_shift + 1) * self.nx]
+            timegap_q = self.timegap_Q_diag.dot(xgapref)
+
+            cost = cost + 0.5*cvxpy.quad_form(self.x, self.timegap_P) + timegap_q*self.x
 
         return cost
 
