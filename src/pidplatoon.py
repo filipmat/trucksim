@@ -4,11 +4,10 @@ import rospy
 import sys
 import time
 
-from trucksim.msg import vehicleposition
-from trucksim.msg import vehiclespeed
-from trucksim.msg import vehicleomega
+from trucksim.msg import MocapState, PWM
 import path
 import frenetpid
+import trxmodel
 
 
 class PID(object):
@@ -65,16 +64,16 @@ class Controller(object):
     send commands to the vehicle. """
 
     def __init__(self, position_topic_type, position_topic_name,
-                 speed_topic_type, speed_topic_name,
-                 omega_topic_type, omega_topic_name, vehicle_ids,
-                 node_name='controller', v=1., k_p=0., k_i=0., k_d=0., rate=20,
+                 control_topic_type, control_topic_name,
+                 vehicle_ids,
+                 v=1., k_p=0., k_i=0., k_d=0., frequency=10,
                  distance_offset=0.4, e_ref=0.5, k_pv=0., k_iv=0., k_dv=0.,
                  vmax = 40):
 
         self.v = v  # Desired velocity of the vehicle.
-        self.vehicle_ids = ['/' + v_id for v_id in vehicle_ids]  # IDs.
+        self.vehicle_ids = vehicle_ids  # IDs.
         self.running = False  # If controller is running or not.
-        self.rate = rate
+        self.rate = frequency
         self.distance_offset = distance_offset
         self.e_ref = e_ref
 
@@ -82,24 +81,28 @@ class Controller(object):
         self.k_iv = k_iv
         self.k_dv = k_dv
 
+        self.dt = 1. / frequency
+
         self.vmin = 0
         self.vmax = vmax
 
-        self.headstart_samples = 10
+        self.headstart_samples = frequency
+        self.k = 0
+
+        self.do_startup = True
+
+        self.gear2_pwm = 120
 
         # Setup ROS node.
-        rospy.init_node(node_name, anonymous=True)
+        rospy.init_node('pid_platoon_controller', anonymous=True)
 
         # Publisher for controlling vehicle.
-        self.pub_speed = rospy.Publisher(speed_topic_name, speed_topic_type,
-                                         queue_size=1)
+        self.pub = rospy.Publisher(control_topic_name, control_topic_type,
+                                   queue_size=1)
 
-        self.pub_omega = rospy.Publisher(omega_topic_name, omega_topic_type,
-                                         queue_size=1)
 
         # Subscriber for vehicle positions.
-        rospy.Subscriber(
-            position_topic_name, position_topic_type, self._callback)
+        rospy.Subscriber(position_topic_name, position_topic_type, self._callback)
 
         # Create reference path object.
         self.pt = path.Path()
@@ -108,17 +111,19 @@ class Controller(object):
         self.frenets = dict()
         self.pids = dict()
         self.positions = dict()
+        self.speed_pwms = dict()        # Stores speed PWM for each vehicle.
         for i, vehicle_id in enumerate(self.vehicle_ids):
-            self.frenets[vehicle_id] = frenetpid.FrenetPID(
-                self.pt, k_p, k_i, k_d)
+            self.frenets[vehicle_id] = frenetpid.FrenetPID(self.pt, k_p, k_i, k_d)
 
             self.positions[vehicle_id] = [0, 0, 0, 0]
 
             if i > 0:
                 self.pids[vehicle_id] = PID(self.k_pv, self.k_iv, self.k_dv)
 
-        print('\nController initialized. Vehicles {}.\n'.format(
-            self.vehicle_ids))
+            self.speed_pwms[vehicle_id] = 1500
+
+
+        print('\nController initialized. Vehicles {}.\n'.format(self.vehicle_ids))
 
     def _callback(self, data):
         """Called when the subscriber receives data. """
@@ -126,43 +131,60 @@ class Controller(object):
         vehicle_id = data.id
         x = data.x
         y = data.y
-        theta = data.theta
+        yaw = data.yaw
         vel = data.v
 
-        self.positions[vehicle_id] = [x, y, theta, vel]
+        self.positions[vehicle_id] = [x, y, yaw, vel]
 
-    def _control(self):
-        """Perform control actions from received data. Sends new values to
-        truck. """
-        j = 0
-        while not rospy.is_shutdown():
-            if self.running:
-                # Track the path for each vehicle.
-                for i, vehicle_id in enumerate(self.vehicle_ids):
-                    omega = self._get_omega(vehicle_id)
-                    self.pub_omega.publish(vehicle_id, omega)
-                    if i == 0:
-                        print('{:.1f}'.format(
-                            self.frenets[vehicle_id].get_y_error()))
+    def control(self):
+        if self.running:
+            if self.k < len(self.vehicle_ids)*self.headstart_samples and self.do_startup:
+                self._startup()
+            else:
+                self._run_pid()
 
-                # At the start of operation: start each vehicle with a constant
-                # speed one after another, delayed with a set amount of samples.
-                if j < self.headstart_samples * len(self.vehicle_ids):
-                    index = j / self.headstart_samples
-                    vehicle_id = self.vehicle_ids[index]
+    def _startup(self):
+        end_num = 3     # For last few samples of startup the vehicle will not accelerate.
+        startup_acc = self.v/((self.headstart_samples - end_num)*self.dt)
 
-                    self.pub_speed.publish(vehicle_id, self.v)
+        current_vehicle_index = self.k / self.headstart_samples
 
-                # Normal operation: only control the speeds of the follower
-                # vehicles. The velocities are obtained from the PIDs.
+        for i, vehicle_id in enumerate(self.vehicle_ids):
+            omega = self._get_omega(vehicle_id)
+            vel = self.positions[vehicle_id][3]
+            angle_pwm = trxmodel.angular_velocity_to_steering_input(omega, vel)
+
+            if i == current_vehicle_index:
+                print('{:2.0f}/{}: Starting {}'.format(self.k % self.headstart_samples,
+                                                       self.headstart_samples - 1, vehicle_id))
+                if self.k % self.headstart_samples < self.headstart_samples - 3:
+                    acc = startup_acc
                 else:
-                    for i, vehicle_id in enumerate(self.vehicle_ids[1:]):
-                        vel = self._get_vel(vehicle_id)
-                        self.pub_speed.publish(vehicle_id, vel)
+                    acc = 0
+            else:
+                acc = 0
 
-                time.sleep(1. / self.rate)
+            new_vel = trxmodel.throttle_input_to_linear_velocity(self.speed_pwms[vehicle_id]) + \
+                acc * self.dt
 
-            j += 1
+            self.speed_pwms[vehicle_id] = trxmodel.linear_velocity_to_throttle_input(new_vel)
+
+            self.pub.publish(vehicle_id, self.speed_pwms[vehicle_id], angle_pwm, self.gear2_pwm)
+
+        self.k += 1
+
+    def _run_pid(self):
+        for i, vehicle_id in enumerate(self.vehicle_ids):
+            omega = self._get_omega(vehicle_id)
+            current_vel = self.positions[vehicle_id][3]
+            angle_pwm = trxmodel.angular_velocity_to_steering_input(omega, current_vel)
+
+            vel = self._get_vel(vehicle_id)
+            vel_pwm = trxmodel.linear_velocity_to_throttle_input(vel)
+
+            self.pub.publish(vehicle_id, vel_pwm, angle_pwm, self.gear2_pwm)
+
+        self.k += 1
 
     def _get_omega(self, vehicle_id):
         """Returns the control input omega for the specified vehicle. """
@@ -176,6 +198,9 @@ class Controller(object):
         """Returns the velocity control signal for the given vehicle. Calculates
         the distance error to the vehicle in front and gets the velocity from
         the PID controller. """
+        if self.vehicle_ids.index(vehicle_id) == 0:
+            return self.v
+
         id1 = self.vehicle_ids[self.vehicle_ids.index(vehicle_id) - 1]
         pos1 = self.positions[id1]
         pos2 = self.positions[vehicle_id]
@@ -195,7 +220,7 @@ class Controller(object):
     def stop(self):
         """Stops/pauses the controller. """
         for vehicle_id in self.vehicle_ids:
-            self.pub_speed.publish(vehicle_id, 0)
+            self.pub.publish(vehicle_id, 1500, 1500, 120)
 
         if self.running:
             self.running = False
@@ -220,7 +245,11 @@ class Controller(object):
     def run(self):
         """Runs the controller. """
         self.start()
-        self._control()
+
+        while not rospy.is_shutdown():
+            self.control()
+            time.sleep(self.dt)
+
         self.stop()
 
     def set_pid(self, kp, ki, kd):
@@ -241,18 +270,13 @@ def main(args):
 
     vehicle_ids = args[1:]
 
-    # Name of ROS node.
-    node_name = 'controller'
-
     # Topic information for subscribing to truck positions.
-    position_topic_name = 'vehicle_position'
-    position_topic_type = vehicleposition
+    position_topic_name = 'mocap_state'
+    position_topic_type = MocapState
 
     # Topic information for publishing vehicle commands.
-    speed_topic_name = 'vehicle_speed'
-    speed_topic_type = vehiclespeed
-    omega_topic_name = 'vehicle_omega'
-    omega_topic_type = vehicleomega
+    control_topic_name = 'pwm_commands'
+    control_topic_type = PWM
 
     scale = 1
 
@@ -261,37 +285,32 @@ def main(args):
     y_radius = 1.2*scale
     center = [0, -y_radius]
 
-    # Constant velocity of lead vehicle.
-    v = 1*scale
 
-    # PID parameters.
-    # 0.0001
-    k_p = 0.00003
-    k_i = -0.02*0
-    k_d = 0.020
+    v = 1.      # Constant velocity of lead vehicle.
 
-    if scale == 1:
-        k_p = 0.5
-        k_i = 0
-        k_d = 3
+    # PID parameters for path tracking.
+    k_p = 0.5
+    k_i = 0
+    k_d = 3
 
+    # PID parameters for speed control.
     k_pv = 2
     k_iv = 0.1
     k_dv = 1
-    e_ref = 10
-    distance_offset = 10
+    e_ref = 1               # Reference distance gap.
+    distance_offset = 0.4   # Vehicle length.
 
-    rate = 20
+    rate = 10
     vmax = 200
 
     # Initialize controller.
     controller = Controller(
         position_topic_type, position_topic_name,
-        speed_topic_type, speed_topic_name,
-        omega_topic_type, omega_topic_name, vehicle_ids, node_name,
+        control_topic_type, control_topic_name,
+        vehicle_ids,
         v=v, k_p=k_p, k_i=k_i, k_d=k_d,
         k_pv=k_pv, k_iv=k_iv, k_dv=k_dv,
-        e_ref=e_ref, distance_offset=distance_offset, rate=rate, vmax=vmax)
+        e_ref=e_ref, distance_offset=distance_offset, frequency=rate, vmax=vmax)
 
     # Set reference path.
     controller.set_reference_path([x_radius, y_radius], center, pts=400)

@@ -25,7 +25,10 @@ class CursesControl(object):
         self.angle_max = angle_max
         self.angle_step = angle_step
 
-        self.init_gear_command = 120
+        self.gear1_command = 60
+        self.gear2_command = 120
+
+        self.init_gear_command = self.gear2_command
         self.init_gear = 2
 
         self.gear = self.init_gear
@@ -136,7 +139,7 @@ class CursesControl(object):
             txt = 'driving backward'
 
         self.stdscr.addstr(self.h, 20, txt)
-        self.stdscr.addstr(self.h, 40, '%.2f' % self.velocity)
+        self.stdscr.addstr(self.h, 40, '{:.2f}'.format(self.velocity))
         self.stdscr.addstr(self.h + 6, 30, '       ')
 
     def set_angle(self):
@@ -154,18 +157,18 @@ class CursesControl(object):
             txt = 'turning left '
 
         self.stdscr.addstr(self.h + 2, 20, txt)
-        self.stdscr.addstr(self.h + 2, 40, '%.2f' % self.angle)
+        self.stdscr.addstr(self.h + 2, 40, '{:.2f}'.format(self.angle))
         self.stdscr.addstr(self.h + 6, 30, '       ')
 
     def set_gear(self):
         """Sets the gear of the truck. """
         if self.gear == 1:
-            self.gear_command = 60
+            self.gear_command = self.gear1_command
         elif self.gear == 2:
-            self.gear_command = 120 	#120
+            self.gear_command = self.gear2_command
 
         self.stdscr.addstr(self.h + 4, 20, 'gear')
-        self.stdscr.addstr(self.h + 4, 40, '%d' % self.gear)
+        self.stdscr.addstr(self.h + 4, 40, '{} ({:3.0f})'.format(self.gear, self.gear_command))
         self.stdscr.addstr(self.h + 6, 30, '       ')
 
     @staticmethod

@@ -4,10 +4,132 @@ import math
 import time
 from matplotlib import pyplot
 
-import speed
+import speed_profile
 import truckmpc
-import frenet_unicycle
 import path
+import frenetpid
+
+
+class FrenetUnicycle(object):
+
+    def __init__(self, pt, x=None, u=None, kp=0., ki=0., kd=0., ID='vehicle'):
+
+        if x is None:
+            x = [0., 0., 0., 0.]
+        self.x = x              # Vehicle state.
+
+        if u is None:
+            u = [0., 0.]
+        self.u = u              # Vehicle input.
+
+        self.ID = ID
+
+        self.frenet = frenetpid.FrenetPID(pt, kp, ki, kd)
+        self.path_pos = PathPosition(pt, [x[0], x[1]])
+
+    def update(self, delta_t):
+        """Gets a new control input and moves the vehicle. """
+        self.u[1] = self._get_omega()
+        self._move(delta_t)
+        self.path_pos.update_position([self.x[0], self.x[1]])
+
+    def _move(self, delta_t):
+        """Moves the vehicle according to the system dynamics. """
+        self.x[0] = self.x[0] + delta_t * self.x[3] * math.cos(self.x[2])
+        self.x[1] = self.x[1] + delta_t * self.x[3] * math.sin(self.x[2])
+        self.x[2] = (self.x[2] + delta_t * self.u[1]) % (2 * math.pi)
+        self.x[3] = self.x[3] + delta_t*self.u[0]
+
+    def _get_omega(self):
+        """Returns the omega control signal calculated by frenet controller. """
+        return self.frenet.get_omega(self.x[0], self.x[1], self.x[2], self.x[3])
+
+    def get_path_pos(self):
+        """Returns the position on the path. """
+        return self.path_pos.get_position()
+
+    def set_pid(self, kp, ki, kd):
+        """Sets the PID parameters of the frenet controller. """
+        self.frenet.set_pid(kp, ki, kd)
+
+    def get_error(self):
+        """Returns the distance to the path. """
+        return self.frenet.get_y_error()
+
+    def get_velocity(self):
+        """Returns the velocity of the vehicle. """
+        return self.x[3]
+
+    def get_x(self):
+        """Returns the current state. """
+        return self.x
+
+    def set_x(self, x):
+        """Sets the state. """
+        self.x = x
+
+    def get_u(self):
+        """Returns the current input. """
+        return self.u
+
+    def set_u(self, u):
+        """Sets the input. """
+        self.u = u
+
+    def set_omega(self, omega):
+        self.u[1] = omega
+
+    def set_acceleration(self, acc):
+        self.u[0] = acc
+
+    def __str__(self):
+        """Returns the current state in string format. """
+        s = 'ID = {}: x = ['.format(self.ID)
+        for x in self.x:
+            s += '{:.2f}, '.format(x)
+
+        s = s[:-2]
+        s += ']'
+
+        return s
+
+
+class PathPosition(object):
+    """Class for keeping track of absolute vehicle position on the path.
+    The position increases with each lap, i.e. does not reset to zero. """
+    def __init__(self, pt, xy):
+        self.pt = pt
+        self.position = self.pt.get_position_on_path(xy)
+        self.path_length = self.pt.get_path_length()
+        self.zero_passes = 0
+        # Allow backwards travel distance less than a fraction of path length.
+        self.backwards_fraction = 1./8
+
+    def update_position(self, xy):
+        """Updates the position on the path. """
+        pos = self.pt.get_position_on_path(xy)
+
+        if (self.position >
+                self.zero_passes*self.path_length + pos + self.path_length/8):
+            self.zero_passes += 1
+
+        self.position = self.zero_passes*self.path_length + pos
+
+    def get_position(self):
+        """Returns the position on the path. """
+        return self.position
+
+    @staticmethod
+    def order_positions(path_positions):
+        for i in range(len(path_positions)):
+
+            if i > 0:
+                while (path_positions[i].position >
+                       path_positions[i - 1].position):
+                    path_positions[i].position -= path_positions[i].path_length
+
+    def __str__(self):
+        return '{:.2f}'.format(self.position)
 
 
 def print_numpy(a):
@@ -30,7 +152,7 @@ class SimMPC(object):
         self.vehicles = vehicles
         self.dt = delta_t
         self.h = horizon
-        self.vopt = speed.Speed()
+        self.vopt = speed_profile.Speed()
         self.runs = runs
         self.truck_length = truck_length
         self.saved_h = saved_h
@@ -269,7 +391,7 @@ def main(args):
     opt_v_max = 1.3
     opt_v_min = 0.7
     opt_v_period_length = 20
-    vopt = speed.Speed()
+    vopt = speed_profile.Speed()
     vopt.generate_sin(opt_v_min, opt_v_max, opt_v_period_length, opt_v_pts)
     vopt.repeating = True
 
@@ -299,7 +421,7 @@ def main(args):
         y = center[1] + y_radius*math.sin(theta)
         v = 0
 
-        vehicles[i] = frenet_unicycle.FrenetUnicycle(
+        vehicles[i] = FrenetUnicycle(
             pt, x=[x, y, theta + math.pi/2, v], u=[0, 0], kp=kp, ki=ki, kd=kd, ID=vehicle_ids[i])
 
     sim = SimMPC(vehicles, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length, safety_distance,

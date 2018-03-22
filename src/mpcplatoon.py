@@ -9,19 +9,18 @@ from trucksim.msg import MocapState, PWM
 import path
 import frenetpid
 import truckmpc
-import speed
+import speed_profile
 import trxmodel
+import controllerGUI
 
 
-# TEST
 def print_numpy(a):
-    str = '['
+    s = '['
     for v in a.flatten():
-        str += ' {:.2f}'.format(v)
-    str += ' ]'
+        s += ' {:.2f}'.format(v)
+    s += ' ]'
 
-    print(str)
-# TEST
+    print(s)
 
 
 class PathPosition(object):
@@ -39,8 +38,7 @@ class PathPosition(object):
         """Updates the position on the path. """
         pos = self.pt.get_position_on_path(xy)
 
-        if (self.position >
-                self.zero_passes*self.path_length + pos + self.path_length/8):
+        if self.position > self.zero_passes*self.path_length + pos + self.path_length/8:
             self.zero_passes += 1
 
         self.position = self.zero_passes*self.path_length + pos
@@ -58,69 +56,65 @@ class Controller(object):
     send commands to the vehicle. """
 
     def __init__(self, position_topic_type, position_topic_name,
-                 control_topic_type, control_topic_name, vehicle_ids, path,
+                 control_topic_type, control_topic_name, vehicle_ids, vehicle_path,
                  Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap,
-                 v=1., k_p=0., k_i=0., k_d=0.,
-                 xmin=None, xmax=None, umin=None, umax=None, x0=None,
-                 saved_h=2):
+                 xmin=None, xmax=None, umin=None, umax=None, x0=None, saved_h=2,
+                 k_p=0., k_i=0., k_d=0.):
 
         self.verbose = True
+        self.do_startup = False
 
-        self.v = v  # Desired velocity of the vehicle.
         self.vehicle_ids = vehicle_ids
         self.running = False  # If controller is running or not.
-        self.rate = 1/delta_t
 
         self.gear2_pwm = 120
 
         self.dt = delta_t
         self.headstart_samples = int(1./self.dt)
-        self.h = horizon
 
-        self.vopt = speed.Speed()
+        self.vopt = speed_profile.Speed()
 
         self.truck_length = truck_length
 
+        self.print_interval = round(1./self.dt)
+
         self.k = 0
-        self.last_control_time = time.time()
+        self.last_print_time = time.time()
 
         # Setup ROS node.
         rospy.init_node('platoon_controller', anonymous=True)
 
         # Publisher for controlling vehicle.
-        self.pwm_publisher = rospy.Publisher(control_topic_name, control_topic_type,
-                                             queue_size=1)
+        self.pwm_publisher = rospy.Publisher(control_topic_name, control_topic_type, queue_size=1)
 
         # Subscriber for vehicle positions.
-        rospy.Subscriber(
-            position_topic_name, position_topic_type, self._callback)
+        rospy.Subscriber(position_topic_name, position_topic_type, self._callback)
 
-        # Create reference path object.
-        self.pt = path
+        # Reference path.
+        self.pt = vehicle_path
 
-        # Create frenet controllers and dict of last positions.
-        self.frenets = dict()
-        self.positions = dict()
-        self.mpcs = dict()
-        self.path_positions = dict()
-        self.speed_pwms = dict()
+        self.frenets = dict()           # Frenet path tracking controllers for each vehicle.
+        self.positions = dict()         # Stores vehicle positions [x, y, yaw, v].
+        self.mpcs = dict()              # MPC controllers.
+        self.path_positions = dict()    # For keeping track of longitudinal path positions.
+        self.speed_pwms = dict()        # Stores speed PWM for each vehicle.
         for i, vehicle_id in enumerate(self.vehicle_ids):
-            self.frenets[vehicle_id] = frenetpid.FrenetPID(
-                self.pt, k_p, k_i, k_d)
+            self.frenets[vehicle_id] = frenetpid.FrenetPID(self.pt, k_p, k_i, k_d)
 
             self.positions[vehicle_id] = [0, 0, 0, 0]
 
-            self.mpcs[vehicle_id] = truckmpc.TruckMPC(Ad, Bd, delta_t, horizon,
-                                                      zeta, Q, R, truck_length,
-                                                      safety_distance, timegap,
-                                                      xmin=xmin, xmax=xmax,
-                                                      umin=umin, umax=umax,
-                                                      x0=x0,
-                                                      vehicle_id=vehicle_id,
-                                                      saved_h=saved_h)
+            # The first vehicle entered is set to be the leader.
             if i == 0:
-                self.mpcs[vehicle_id].set_leader(True)
+                leader = True
+            else:
+                leader = False
+
+            self.mpcs[vehicle_id] = truckmpc.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q, R,
+                                                      truck_length, safety_distance, timegap,
+                                                      xmin=xmin, xmax=xmax, umin=umin, umax=umax,
+                                                      x0=x0, vehicle_id=vehicle_id, saved_h=saved_h,
+                                                      is_leader=leader)
 
             self.path_positions[vehicle_id] = PathPosition(self.pt)
             self.speed_pwms[vehicle_id] = 1500
@@ -142,144 +136,145 @@ class Controller(object):
         vel = data.v
 
         self.positions[vehicle_id] = [x, y, yaw, vel]
-        try:
-            self.path_positions[vehicle_id].update_position([x, y])
-        except:
-            pass
+        self.path_positions[vehicle_id].update_position([x, y])
 
-    def _control(self):
-        """Perform control actions from received data. Sends new values to
-        truck. """
-
-        self._control_startup()
-        self._control_normal_operation()
-
-    def _control_startup(self):
-        """Starts the controller by starting one vehicle at a time. """
-        startup_acc = self.vopt.get_average()/((self.headstart_samples - 3)*self.dt)
-
+    def control(self):
+        """Performs one iteration of the control. It will either be startup or normal operation
+        with MPC. """
         if self.running:
 
-            for i in range(len(self.vehicle_ids)):
-                for j in range(self.headstart_samples):
-                    for k, vehicle_id in enumerate(self.vehicle_ids):
-                        # Calculate angle pwm.
-                        omega = self._get_omega(vehicle_id)
-                        vel = self.positions[vehicle_id][3]
-                        angle_pwm = trxmodel.angular_velocity_to_steering_input(omega, vel)
+            if self.k < len(self.vehicle_ids)*self.headstart_samples and self.do_startup:
+                self._startup()
+            else:
+                self._run_mpc()
 
-                        # If the vehicle is the current one being started, set acceleration.
-                        if k == i:
-                            print('{:2.0f}/{}: Starting {}'.format(
-                                j, self.headstart_samples - 1,
-                                vehicle_id))
-                            if j < self.headstart_samples - 3:
-                                acc = startup_acc
-                            else:
-                                acc = 0
-                        else:
-                            acc = 0
+    def _startup(self):
+        """Runs one iteration of the startup. Accelerates one vehicle at a time depending on the
+        value of k. """
 
-                        new_vel = trxmodel.throttle_input_to_linear_velocity(
-                            self.speed_pwms[vehicle_id]) + acc*self.dt
+        end_num = 3     # For last few samples of startup the vehicle will not accelerate.
+        startup_acc = self.vopt.get_average()/((self.headstart_samples - end_num)*self.dt)
 
-                        self.speed_pwms[vehicle_id] = trxmodel.linear_velocity_to_throttle_input(
-                            new_vel)
+        current_vehicle_index = self.k / self.headstart_samples     # Current vehicle starting.
 
-                        self.pwm_publisher.publish(vehicle_id, self.speed_pwms[vehicle_id],
-                                                   angle_pwm, self.gear2_pwm)
+        for i, vehicle_id in enumerate(self.vehicle_ids):
+            angle_pwm = self._get_angle_pwm(vehicle_id)     # Steering input for path tracking.
 
-                    time.sleep(self.dt)
+            # Accelerate the current vehicle that is started. Others have acceleration zero.
+            if i == current_vehicle_index:
+                if self.k % self.headstart_samples == 0:
+                    print('Starting vehicle {}.'.format(vehicle_id))
 
-    def _control_normal_operation(self):
-        """Get control inputs from MPCs. """
-        k_skip = round(1./self.dt)
+                if self.k % self.headstart_samples < self.headstart_samples - 3:
+                    acc = startup_acc
+                else:
+                    acc = 0     # End of startup.
+            else:
+                acc = 0         # Vehicle already started or not yet started.
 
-        while not rospy.is_shutdown():
-            if self.running:
-                time_start = time.time()
-                if self.verbose and self.k % k_skip == 0:
-                    tm = time.time() - self.last_control_time
-                    self.last_control_time = time.time()
-                    print('\nk = {}, avg time = {:.3f}, dt = {:.2f}, diff = {:.3f}'.format(
-                        self.k, tm/k_skip, self.dt, tm/k_skip - self.dt))
+            # Calculate the new speed control input from the current input and the acceleration.
+            new_vel = trxmodel.throttle_input_to_linear_velocity(self.speed_pwms[vehicle_id]) + \
+                acc * self.dt
+            self.speed_pwms[vehicle_id] = trxmodel.linear_velocity_to_throttle_input(new_vel)
 
-                for vehicle_id in self.vehicle_ids:
-                    current_vel = self.positions[vehicle_id][3]
-                    omega = self._get_omega(vehicle_id)
-                    angle_pwm = trxmodel.angular_velocity_to_steering_input(omega, current_vel)
+            # Publish speed and steering inputs.
+            self.pwm_publisher.publish(vehicle_id, self.speed_pwms[vehicle_id], angle_pwm,
+                                       self.gear2_pwm)
 
-                    acc = self._get_acc(vehicle_id)
-                    new_vel = trxmodel.throttle_input_to_linear_velocity(
-                        self.speed_pwms[vehicle_id]) + acc * self.dt
-                    self.speed_pwms[vehicle_id] = trxmodel.linear_velocity_to_throttle_input(
-                        new_vel)
+            # Update the MPC state information.
+            vel = self.positions[vehicle_id][3]
+            path_pos = self.path_positions[vehicle_id].get_position()
+            self.mpcs[vehicle_id].set_new_x0(numpy.array([vel, path_pos]))
 
-                    self.pwm_publisher.publish(vehicle_id, self.speed_pwms[vehicle_id],
-                                               angle_pwm, self.gear2_pwm)
+        self.k += 1
 
-                self.k += 1
+    def _run_mpc(self):
+        """Runs one iteration of the MPC controller. """
 
-                t_elapsed = time.time() - time_start
+        if self.verbose and self.k % self.print_interval == 0:
+            elapsed_time = time.time() - self.last_print_time
+            average_time = elapsed_time / self.print_interval
+            self.last_print_time = time.time()
+            print('\nk = {}, avg time = {:.3f}, dt = {:.2f}, diff = {:.3f}'.format(
+                self.k, average_time, self.dt, average_time - self.dt))
 
-                if t_elapsed < self.dt:
-                    time.sleep(self.dt - t_elapsed)
+        for vehicle_id in self.vehicle_ids:
+            # Get control input for the steering from the Frenet path tracking controller.
+            angle_pwm = self._get_angle_pwm(vehicle_id)
 
-    def _get_omega(self, vehicle_id):
-        """Returns the control input omega for the specified vehicle. """
-        pos = self.positions[vehicle_id]
-        omega = self.frenets[vehicle_id].get_omega(
-            pos[0], pos[1], pos[2], pos[3])
+            # Get control input for the velocity from the MPC controller.
+            speed_pwm = self._get_speed_pwm(vehicle_id)
 
-        return omega
+            # Publish speed and steering inputs.
+            self.pwm_publisher.publish(vehicle_id, speed_pwm, angle_pwm, self.gear2_pwm)
 
-    def _get_acc(self, vehicle_id):
-        """Returns the velocity control signal for the given vehicle. Calculates
-        the distance error to the vehicle in front and gets the velocity from
-        the PID controller. """
-        v = self.positions[vehicle_id][3]
+        self.k += 1
+
+    def _get_angle_pwm(self, vehicle_id):
+        """Returns the steering control input for the vehicle from the path tracking and vehicle
+        model. """
+        pose = self.positions[vehicle_id]
+        omega = self.frenets[vehicle_id].get_omega(pose[0], pose[1], pose[2], pose[3])
+        velocity = self.positions[vehicle_id][3]
+
+        angle_pwm = trxmodel.angular_velocity_to_steering_input(omega, velocity)
+
+        return angle_pwm
+
+    def _get_speed_pwm(self, vehicle_id):
+        """Returns the speed control input from the MPC controller. The MPC controller gives
+        acceleration which is then translated to a new velocity and a control input. """
+        acceleration = self._get_acceleration(vehicle_id)
+        new_velocity = trxmodel.throttle_input_to_linear_velocity(self.speed_pwms[vehicle_id]) + \
+            acceleration * self.dt
+        self.speed_pwms[vehicle_id] = trxmodel.linear_velocity_to_throttle_input(new_velocity)
+
+        return self.speed_pwms[vehicle_id]
+
+
+    def _get_acceleration(self, vehicle_id):
+        """Returns the desired acceleration of the vehicle from the MPC controller. If the vehicle
+        is not the leader vehicle it will take into account the preceding vehicle's trajectory. """
+        velocity = self.positions[vehicle_id][3]
         path_pos = self.path_positions[vehicle_id].get_position()
 
-        self.mpcs[vehicle_id].set_new_x0(numpy.array([v, path_pos]))
+        self.mpcs[vehicle_id].set_new_x0(numpy.array([velocity, path_pos]))
+
+        id_prec = ''    # ID of preceding vehicle.
 
         # Leader vehicle: don't add preceding vehicle information.
         if self.vehicle_ids.index(vehicle_id) == 0:
             self.mpcs[vehicle_id].compute_optimal_trajectories(self.vopt)
-
         else:
             id_prec = self.vehicle_ids[self.vehicle_ids.index(vehicle_id) - 1]
             preceding_x = self.mpcs[id_prec].get_assumed_state()
 
-            self.mpcs[vehicle_id].compute_optimal_trajectories(
-                self.vopt, preceding_x)
+            self.mpcs[vehicle_id].compute_optimal_trajectories(self.vopt, preceding_x)
 
         acc = self.mpcs[vehicle_id].get_instantaneous_acceleration()
 
         # Print stuff
-        if self.verbose and self.k % round(1./self.dt) == 0:
+        if self.verbose and self.k % self.print_interval == 0:
             opt_v = self.vopt.get_speed_at(path_pos)
 
             s = ''
             s += 'id = {}, s = {:6.2f}'.format(vehicle_id, path_pos)
-            s += ', v = {:.2f} ({:.2f}), a = {:6.3f}'.format(
-                v, opt_v, acc)
+            s += ', v = {:.2f} ({:.2f}), a = {:6.3f}'.format(velocity, opt_v, acc)
 
             if self.vehicle_ids.index(vehicle_id) > 0:
-                p1 = self.path_positions[id_prec].get_position()
-                p2 = self.path_positions[vehicle_id].get_position()
-                d = p1 - p2 - self.truck_length
+                pos1 = self.path_positions[id_prec].get_position()
+                pos2 = self.path_positions[vehicle_id].get_position()
+                distance = pos1 - pos2 - self.truck_length
                 try:
-                    t = d / v
+                    timegap = distance / velocity
                 except ZeroDivisionError:
-                    t = 0
-                s += ', timegap = {:.2f}'.format(t)
+                    timegap = 0
+                s += ', timegap = {:.2f}'.format(timegap)
 
                 if self.mpcs[vehicle_id].status != 'OK':
                     s += '. ' + self.mpcs[vehicle_id].status
 
-
             print(s)
-            print_numpy(self.mpcs[vehicle_id].get_input_trajectory())
 
         return acc
 
@@ -308,17 +303,17 @@ class Controller(object):
     def run(self):
         """Runs the controller. """
         self.start()
-        self._control()
+
+        while not rospy.is_shutdown():
+            self.control()
+            time.sleep(self.dt)
+
         self.stop()
 
     def set_pid(self, kp, ki, kd):
         """Sets the PID parameters. """
         for vehicle_id in self.vehicle_ids:
             self.frenets[vehicle_id].set_pid(kp, ki, kd)
-
-    def set_speed(self, v):
-        """Sets the vehicle speed. """
-        self.v = v
 
 
 def main(args):
@@ -328,9 +323,6 @@ def main(args):
         sys.exit()
 
     vehicle_ids = args[1:]
-
-    # Name of ROS node.
-    node_name = 'controller'
 
     # Topic information for subscribing to truck positions.
     position_topic_name = 'mocap_state'
@@ -347,9 +339,6 @@ def main(args):
     y_radius = 1.2*scale
     center = [0, -y_radius]
     pts = 400
-
-    # Constant velocity of lead vehicle.
-    v = 1.*scale
 
     # PID parameters.
     # 0.0001
@@ -371,7 +360,7 @@ def main(args):
     v0 = 1.
     Q_v = 1     # Part of Q matrix for velocity tracking.
     Q_s = 0.5   # Part of Q matrix for position tracking.
-    Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2) # State tracking.
+    Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2)     # State tracking.
     R_acc = 0.1
     R = numpy.array([1]) * R_acc  # Input tracking.
     v_min = 0.
@@ -396,7 +385,7 @@ def main(args):
     opt_v_max = 1.2
     opt_v_min = 0.8
     opt_v_period_length = 40
-    vopt = speed.Speed()
+    vopt = speed_profile.Speed()
     vopt.generate_sin(opt_v_min, opt_v_max, opt_v_period_length, opt_v_pts)
     vopt.repeating = True
 
@@ -405,20 +394,16 @@ def main(args):
 
     # Initialize controller.
     controller = Controller(
-        position_topic_type, position_topic_name,
-        control_topic_type, control_topic_name,
-        vehicle_ids, pt,
-        Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
-        safety_distance, timegap,
-        v=v, k_p=k_p, k_i=k_i, k_d=k_d,
-        xmin=xmin, xmax=xmax,
-        umin=umin, umax=umax, x0=x0, saved_h=saved_h
+        position_topic_type, position_topic_name, control_topic_type, control_topic_name,
+        vehicle_ids, pt, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length, safety_distance,
+        timegap, xmin=xmin, xmax=xmax, umin=umin, umax=umax, x0=x0, saved_h=saved_h,
+        k_p=k_p, k_i=k_i, k_d=k_d
     )
 
     controller.set_vopt(vopt)
 
     # Start controller.
-    controller.run()
+    controllerGUI.ControllerGUI(controller)
 
 
 if __name__ == '__main__':

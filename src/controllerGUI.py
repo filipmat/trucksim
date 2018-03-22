@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import Tkinter as Tk
-import controllerGUI
+import time
 
 
 class ControllerGUI():
@@ -77,8 +77,12 @@ class ControllerGUI():
 
         # Get a list with descriptive names of the adjustable parameters and
         # one list of the current values of those parameters.
-        self.adjustables, self.adj_values = controller.get_adjustables()
-        self.adj_vars = [] # List of textvariables for displaying the values.
+        try:
+            self.adjustables, self.adj_values = controller.get_adjustables()
+            self.adj_vars = [] # List of textvariables for displaying the values.
+        except AttributeError:
+            self.adjustables = []
+            self.adj_vars = []
 
         if len(self.adjustables) > 0:
             # Create label for the frame.
@@ -154,8 +158,18 @@ class ControllerGUI():
         self.root.mainloop()
 
     def control_loop(self):
+        start_time = time.time()
+
         self.controller.control()
-        self.root.after(int(self.controller.dt*1000), self.control_loop)
+
+        elapsed_time = time.time() - start_time
+
+        if elapsed_time >= self.controller.dt:
+            sleep_time = 1
+        else:
+            sleep_time = int((self.controller.dt - elapsed_time)*1000)
+
+        self.root.after(sleep_time, self.control_loop)
 
     def make_entry(self, framep, background, caption, **options):
         """Makes a tk entry with label to the left of it. """

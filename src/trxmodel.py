@@ -58,8 +58,8 @@ def angular_velocity_to_wheel_angle(angular_velocity, linear_velocity):
     linear velocity. """
     try:
         wheel_angle = math.atan(angular_velocity*axle_length/linear_velocity)
-    except ZeroDivisionError:   # No turning if vehicle standing still.
-        wheel_angle = 0 #sign(angular_velocity)*math.pi/2
+    except ZeroDivisionError:
+        wheel_angle = 0     # No turning if vehicle is standing still.
 
     return wheel_angle
 

@@ -169,7 +169,7 @@ def main(args):
     controller.set_reference_path([x_radius, y_radius], center)
 
     # Start controller in a GUI.
-    ctrl_gui = controllerGUI.ControllerGUI(controller)
+    controllerGUI.ControllerGUI(controller)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 
+"""
+Usage: rosrun trucksim mocap_publisher.py [vehicle_id]
+"""
+
 import rospy
 from trucksim.msg import MocapState
 from mocap_source_2 import *
@@ -13,31 +17,32 @@ class MocapPublisher(object):
     """Publisher class for vehicle pose from MoCap data. """
 
     def __init__(self, topic_name, topic_type, mocap_vehicle_id, mocap_host_address,
-                 update_freq=20, mocap_used=True, sim_omega=0.75, sim_radius=None, sim_center=None):
+                 frequency=20, mocap_used=True, sim_omega=0.75, sim_radius=None, sim_center=None):
 
         self.mocap_vehicle_id = mocap_vehicle_id
-        self.mocap_used = mocap_used
 
         # Vehicle pose.
-        self.x = 0
-        self.y = 0
-        self.yaw = 0
-        self.yaw_rate = 0
-        self.v = 0
-        self.a = 0
-        self.r = 0
+        self.x = 0          # x-coordinate in m.
+        self.y = 0          # y-coordinate in m.
+        self.yaw = 0        # Orientation in radians.
+        self.yaw_rate = 0   # Angular velocity in radians/s.
+        self.v = 0          # Linear velocity in m/s.
+        self.a = 0          # Acceleration in m/s/s.
+        self.r = 0          # Turning radius in m.
 
+        # Publisher for publishing vehicle state.
         self.pub = rospy.Publisher(topic_name, topic_type, queue_size=1)
         rospy.init_node(self.mocap_vehicle_id, anonymous=True)
 
-        self.rate = rospy.Rate(update_freq)
+        # Publishing rate.
+        self.rate = rospy.Rate(frequency)
 
         self.node_init_time = 0
         self.last_update_time = 0
 
         print('Pose publisher initialized for vehicle {}'.format(self.mocap_vehicle_id))
 
-        if self.mocap_used:
+        if mocap_used:
             self.vehicle = MoCapVehicle(mocap_host_address, self.mocap_vehicle_id)
         else:
             if sim_radius is None:
@@ -62,8 +67,8 @@ class MocapPublisher(object):
             total_time_elapsed = time.time() - self.node_init_time  # Time since initialization.
 
             try:
-                x, y, yaw = self.vehicle.get_pose()
-                self._update_pose(x, y, yaw)
+                x, y, yaw = self.vehicle.get_pose()     # Get pose from MoCap.
+                self._update_pose(x, y, yaw)            # Update velocity etc.
             except:
                 print('{:.1f}: Lost data.'.format(total_time_elapsed))
 
@@ -176,27 +181,27 @@ def main(args):
         sys.exit()
 
     try:
-        if int(args[2]) == 1:   # If the second argument is zero a simulated vehicle will be used.
+        if int(args[2]) == 1:   # If the second argument is one a simulated vehicle will be used.
             mocap_used = False
-    except:
-        pass
+    except (IndexError, ValueError) as e:
+        print('Error: invalid second argument entered: {}'.format(e))
 
-    freq = 20               # Publishing frequency in Hz.
+    frequency = 20              # Publishing frequency in Hz.
 
     # Publisher node info.
-    topic_name = 'mocap_state' # Name of ROS topic.
-    topic_type = MocapState    # Type of ROS topic.
+    topic_name = 'mocap_state'  # Name of ROS topic.
+    topic_type = MocapState     # Type of ROS topic.
 
     mocap_address = '192.168.1.10'  # IP-address of the MoCap computer.
 
     # Data if using a simulated vehicle for testing.
-    sim_omega = 0.75         # Angular velocity of vehicle.
-    sim_radius = [1.3, 1.7]   # Radii of ellipse path.
-    sim_center = [0.3, -1.3]  # Center of ellipse path.
+    sim_omega = 0.75            # Angular velocity of vehicle.
+    sim_radius = [1.3, 1.7]     # Radii of ellipse path.
+    sim_center = [0.3, -1.3]    # Center of ellipse path.
 
     # Create and run the publisher.
     publisher = MocapPublisher(topic_name, topic_type, mocap_vehicle_id, mocap_address,
-                               update_freq=freq, mocap_used=mocap_used,
+                               frequency=frequency, mocap_used=mocap_used,
                                sim_omega=sim_omega, sim_radius=sim_radius, sim_center=sim_center)
 
     publisher.start()   # Start the publisher.

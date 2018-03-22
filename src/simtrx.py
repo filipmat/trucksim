@@ -10,7 +10,7 @@ from trucksim.msg import MocapState, PWM
 from geometry_msgs.msg import Twist
 
 
-class TestTrxNode(object):
+class SimTrx(object):
     """Class for simulating the movement of a vehicle. The vehicle is identified with an ID. """
 
     def __init__(self, vehicle_id,
@@ -31,7 +31,7 @@ class TestTrxNode(object):
         self.acceleration = 0
         self.radius = 0
 
-        self.dt = 1. / frequency # Update interval.
+        self.dt = 1. / frequency  # Update interval.
 
         self.last_x = self.x[:]  # Store the last state.
 
@@ -78,7 +78,7 @@ class TestTrxNode(object):
     def _move(self):
         """Moves the vehicle as a unicycle and calculates velocity, yaw rate, etc. """
 
-        self.last_x = self.x[:] # Save information for velocity calculation.
+        self.last_x = self.x[:]     # Save information for velocity calculation.
 
         # Move the vehicle according to the dynamics.
         self.x[0] = self.x[0] + self.dt * self.u[0] * math.cos(self.x[2])
@@ -108,7 +108,7 @@ class TestTrxNode(object):
 
     def __str__(self):
         """Returns the name of the node as well as the vehicle position. """
-        return self.vehicle_id + ': ' + super(TestTrxNode, self).__str__()
+        return self.vehicle_id + ': ' + super(SimTrx, self).__str__()
 
 
 def main(args):
@@ -126,9 +126,9 @@ def main(args):
     control_topic_name = vehicle_id + '/cmd_vel'
     control_topic_type = Twist
 
-    vn = TestTrxNode(vehicle_id,
-                     mocap_topic_name, mocap_topic_type, control_topic_name, control_topic_type,
-                     [0, 0, math.pi], [0., 0., 1], frequency)
+    vn = SimTrx(vehicle_id,
+                mocap_topic_name, mocap_topic_type, control_topic_name, control_topic_type,
+                [0, 0, math.pi], [0., 0., 1], frequency)
 
     vn.run()
 

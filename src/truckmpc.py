@@ -112,9 +112,10 @@ class TruckMPC(object):
         self.PR_ch = numpy.linalg.cholesky(
             numpy.kron(numpy.eye(self.h), self.R))
 
-        # self.state_P = self.get_state_P()
-        # self.input_P = self.get_input_P()
-        # self.timegap_P = self.get_timegap_P()
+        # Alternate cost calculation.
+        self.state_P = self.get_state_P()
+        self.input_P = self.get_input_P()
+        self.timegap_P = self.get_timegap_P()
 
 
     def get_state_constraints(self):
@@ -330,17 +331,19 @@ class TruckMPC(object):
         """Set the vehicle to be the leader or not. Default is false. """
         self.is_leader = is_leader
 
-    # def get_state_P(self):
-    #     P = sparse.kron(sparse.eye(self.h + 1), (1 - self.zeta)*self.Q)
-    #     return P
-    #
-    # def get_input_P(self):
-    #     P = sparse.kron(sparse.eye(self.h), self.R)
-    #     return P
-    #
-    # def get_timegap_P(self):
-    #     P = sparse.kron(sparse.eye(self.h + 1), self.zeta*self.Q)
-    #     return P
+    # Alternate cost calculation.
+
+    def get_state_P(self):
+        P = sparse.kron(sparse.eye(self.h + 1), (1 - self.zeta)*self.Q)
+        return P
+
+    def get_input_P(self):
+        P = sparse.kron(sparse.eye(self.h), self.R)
+        return P
+
+    def get_timegap_P(self):
+        P = sparse.kron(sparse.eye(self.h + 1), self.zeta*self.Q)
+        return P
 
 
 def main():

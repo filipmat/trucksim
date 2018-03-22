@@ -43,46 +43,49 @@ alpha_right = alpha(~left);
 
 forward = velocity < 1500;
 
-v_f = v(forward);
-velocity_f = velocity(forward);
-a_f = a(forward);
+v_forward = v(forward);
+velocity_forward = velocity(forward);
+a_forward = a(forward);
 
 % Steering as function of wheel angle.
 angle_left_k = [alpha_left alpha_left.^0] \ steering_left;
 angle_right_k = [alpha_right alpha_right.^0] \ steering_right;
 
 % Wheel angle as function of steering. 
-srk = [steering_right steering_right.^0] \ alpha_right;
-slk = [steering_left steering_left.^0] \ alpha_left;
+steering_right_k = [steering_right steering_right.^0] \ alpha_right;
+steering_left_k = [steering_left steering_left.^0] \ alpha_left;
 
 % Throttle as function of speed. 
-speedf_k = [v_f v_f.^0] \ velocity_f;
+v_forward_k = [v_forward v_forward.^0] \ velocity_forward;
 
 
 %%
-vvf = sort(v_f);
-vuf = speedf_k(1)*vvf + speedf_k(2)*vvf.^0;
+v_forward_sorted = sort(v_forward);
+v_forward_test = v_forward_k(1)*v_forward_sorted + ...
+    v_forward_k(2)*v_forward_sorted.^0;
 
 figure
-plot(v_f, velocity_f, '.')
+plot(v_forward, velocity_forward, '.')
 hold on
-plot(vvf, vuf, 'r')
+plot(v_forward_sorted, v_forward_test, 'r')
 
 %%
-ar = sort(alpha_right);
-sr = angle_right_k(1)*ar + angle_right_k(2)*ar.^0;
+alpha_right_sorted = sort(alpha_right);
+steering_right_test = angle_right_k(1)*alpha_right_sorted + ...
+    angle_right_k(2)*alpha_right_sorted.^0;
 
 figure
 plot(alpha_right, steering_right, '.')
 hold on
-plot(ar, sr, 'r')
+plot(alpha_right_sorted, steering_right_test, 'r')
 
 %%
-al = sort(alpha_left);
-sl = angle_left_k(1)*al + angle_left_k(2)*al.^0;
+alpha_left_sorted = sort(alpha_left);
+steering_left_test = angle_left_k(1)*alpha_left_sorted + ...
+    angle_left_k(2)*alpha_left_sorted.^0;
 
 figure
 plot(alpha_left, steering_left, '.')
 hold on
-plot(al, sl, 'r')
+plot(alpha_left_sorted, steering_left_test, 'r')
 

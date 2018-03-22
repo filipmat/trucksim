@@ -4,7 +4,7 @@
 # the truck positions are published.
 
 # TODO
-# Add, fix or remove recording of data.
+# Add/fix recording of data.
 
 import rospy
 import time
@@ -12,15 +12,15 @@ import Tkinter as Tk
 import math
 import os
 import random
+import sys
 
-from trucksim.msg import vehicleposition
+from trucksim.msg import MocapState
 import path
 
 
 class TruckPlot(object):
     """Class for GUI that plots the truck trajectories. """
 
-    # noinspection PyPep8
     def __init__(self, root, topic_type, topic_name,
                  filename='record', width=5, height=5, win_size=600,
                  clear_seconds=180, inactivity_time_limit=20, truckl = 0.4):
@@ -245,27 +245,17 @@ class TruckPlot(object):
 
         # Buttons for zooming the area.
         zoom_frame = Tk.Frame(self.root, background=bg_color)
-        zoom_frame.pack(in_=bottom_frame, side=Tk.TOP, anchor=Tk.N,
-                          pady=(2 * ypad, 0))
-        zoom_in_button = Tk.Button(self.root,
-                                   text='+',
-                                   command = self._zoom_in)
-        zoom_out_button = Tk.Button(self.root,
-                                   text='-',
-                                   command=self._zoom_out)
+        zoom_frame.pack(in_=bottom_frame, side=Tk.TOP, anchor=Tk.N, pady=(2 * ypad, 0))
+        zoom_in_button = Tk.Button(self.root, text='+', command = self._zoom_in)
+        zoom_out_button = Tk.Button(self.root, text='-', command=self._zoom_out)
         zoom_out_button.pack(in_=zoom_frame, side=Tk.LEFT)
         zoom_in_button.pack(in_=zoom_frame, side=Tk.LEFT)
 
         # Buttons for truck size.
         truck_size_frame = Tk.Frame(self.root, background=bg_color)
-        truck_size_frame.pack(in_=bottom_frame, side=Tk.TOP, anchor=Tk.N,
-                              pady=(ypad, 0))
-        enlarge_trucks_button = Tk.Button(self.root,
-                                         text='+',
-                                         command=self._enlarge_trucks)
-        reduce_trucks_button = Tk.Button(self.root,
-                                         text='-',
-                                         command=self._reduce_trucks)
+        truck_size_frame.pack(in_=bottom_frame, side=Tk.TOP, anchor=Tk.N, pady=(ypad, 0))
+        enlarge_trucks_button = Tk.Button(self.root, text='+', command=self._enlarge_trucks)
+        reduce_trucks_button = Tk.Button(self.root, text='-', command=self._reduce_trucks)
         reduce_trucks_button.pack(in_=truck_size_frame, side = Tk.LEFT)
         enlarge_trucks_button.pack(in_=truck_size_frame, side = Tk.LEFT)
 
@@ -291,24 +281,6 @@ class TruckPlot(object):
         lbl.pack(in_=frame, side=Tk.LEFT)
         entry = Tk.Entry(self.root, width=9, **options)
         entry.pack(in_=frame, side=Tk.LEFT)
-
-    def _callback(self, data):
-        """Subscriber callback method. Called when receiving data on the topic.
-        Moves the vehicle corresponding to the id in the data or creates a new
-        vehicle if it does not exist. """
-        vehicle_id = data.id
-        x = data.x
-        y = data.y
-        theta = data.theta
-
-        try:
-            self._move_truck(vehicle_id, x, y, theta)
-            self._draw_tail(vehicle_id, x, y, theta)
-        except KeyError:
-            self._create_new_truck(vehicle_id, x, y, theta)
-
-        # Store last time data was published in order to check inactivity.
-        self.last_published_time[vehicle_id] = time.time()
 
     def _set_area_size(self, width=None, height=None):
         """Sets the width and height of the drawable area in meters. """
@@ -354,7 +326,7 @@ class TruckPlot(object):
             else:
                 self.gen_circle_path([xr, yr], 400, [xc, yc])
                 print('New reference path applied.')
-        except Exception as e:
+        except ValueError:
             print('Invalid values entered.')
 
         self.xr_var.set(self.xr)
@@ -378,6 +350,24 @@ class TruckPlot(object):
         """Quits the GUI. """
         print('Quitting.')
         self.root.quit()
+
+    def _callback(self, data):
+        """Subscriber callback method. Called when receiving data on the topic.
+        Moves the vehicle corresponding to the id in the data or creates a new
+        vehicle if it does not exist. """
+        vehicle_id = data.id
+        x = data.x
+        y = data.y
+        yaw = data.yaw
+
+        try:
+            self._move_truck(vehicle_id, x, y, yaw)
+            self._draw_tail(vehicle_id, x, y)
+        except KeyError:
+            self._create_new_truck(vehicle_id, x, y, yaw)
+
+        # Store last time data was published in order to check inactivity.
+        self.last_published_time[vehicle_id] = time.time()
 
     def _move_truck(self, vehicle_id, x, y, theta):
         """Moves a truck triangle to the new position. """
@@ -416,7 +406,7 @@ class TruckPlot(object):
 
         return color
 
-    def _draw_tail(self, vehicle_id, x, y, theta):
+    def _draw_tail(self, vehicle_id, x, y):
         """Draws the last movement of the vehicle. """
         if self.display_tail:
             state = Tk.NORMAL
@@ -789,20 +779,21 @@ class TruckPlot(object):
 
 
 def main():
-    topic_name = 'vehicle_position'  # Name of topic the node subscribes to.
-    topic_type = vehicleposition  # The type of the topic.
+    topic_name = 'mocap_state'  # Name of topic the node subscribes to.
+    topic_type = MocapState     # The type of the topic.
 
-    width = 6  # Width in meters of displayed area.
-    height = 6  # Height in meters.
-    x_radius = 1.70  # Ellipse x-radius.
-    y_radius = 1.20  # Ellipse y-radius.
+    width = 6           # Width in meters of displayed area.
+    height = 6          # Height in meters.
+    x_radius = 1.70     # Ellipse x-radius.
+    y_radius = 1.20     # Ellipse y-radius.
     center = [0, -y_radius]  # The coordinates of the center of the ellipse.
-    pts = 200  # Number of points on displayed reference path.
+    pts = 200           # Number of points on displayed reference path.
+    win_size = 600      # Size of window in pixels.
 
     root = Tk.Tk()
     try:
         truckplot = TruckPlot(root, topic_type, topic_name,
-                              width=width, height=height, truckl=0.5, win_size=500)
+                              width=width, height=height, truckl=0.5, win_size=win_size)
 
         truckplot.gen_circle_path([x_radius, y_radius], pts, center=center)
 
