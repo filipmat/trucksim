@@ -105,6 +105,7 @@ class TruckMPC(object):
         if not self.is_leader:
             self.prob.constraints += self.get_safety_constraints() # update
 
+        # Cholesky cost calculation.
         self.PQ_ch_s = numpy.linalg.cholesky(
             numpy.kron(numpy.eye(self.h + 1), (1 - self.zeta) * self.Q))
         self.PQ_ch_t = numpy.linalg.cholesky(
@@ -112,11 +113,16 @@ class TruckMPC(object):
         self.PR_ch = numpy.linalg.cholesky(
             numpy.kron(numpy.eye(self.h), self.R))
 
-        # Alternate cost calculation.
+        # Quad form cost calculation.
         self.state_P = self.get_state_P()
         self.input_P = self.get_input_P()
         self.timegap_P = self.get_timegap_P()
 
+        self.state_Q_diag = sparse.kron(sparse.eye(self.h + 1), -(1 - self.zeta)*self.Q)
+        self.timegap_Q_diag = sparse.kron(sparse.eye(self.h + 1), -self.zeta * self.Q)
+        self.R_diag = sparse.kron(sparse.eye(self.h), -self.R)
+
+        self.timegap_shift = int(round(self.timegap / self.dt))
 
     def get_state_constraints(self):
         """Returns the constraints corresponding to state limits. """
@@ -202,7 +208,8 @@ class TruckMPC(object):
     def solve_mpc(self):
         """Solves the MPC problem. """
 
-        cost = self.get_mpc_cost()
+        #cost = self.get_mpc_cost_cholesky()
+        cost = self.get_mpc_cost_quad_form()
 
         self.prob.objective = cvxpy.Minimize(cost)
 
@@ -228,41 +235,6 @@ class TruckMPC(object):
             self.assumed_x[self.h*self.saved_h*self.nx:] = \
                 self.get_backup_predicted_state()
             self.status = 'No MPC optimal. '
-
-    def get_mpc_cost(self):
-        """Returns the cost for the MPC problem. The cost is the combined cost
-        for tracking reference, timegap and input trajectories. If the vehicle
-        is the leader the timegap tracking cost is excluded. """
-        cost = self.get_state_reference_cost() + self.get_input_reference_cost()
-
-        if not self.is_leader:
-            gap_cost = self.get_timegap_cost()
-            cost = cost + gap_cost
-
-        return cost
-
-    def get_state_reference_cost(self):
-        """Returns the cost corresponding to state reference tracking. """
-        cost = cvxpy.sum_entries(cvxpy.square(self.PQ_ch_s * (self.x - self.xref)))
-
-        return cost
-
-    def get_input_reference_cost(self):
-        """Returns the cost corresponding to input reference tracking. """
-        cost = cvxpy.sum_entries(cvxpy.square(self.PR_ch * (self.u - self.uref)))
-
-        return cost
-
-    def get_timegap_cost(self):
-        """Returns the cost corresponding to timegap tracking. """
-        shift = int(round(self.timegap / self.dt))
-        xgapref = self.preceding_x[
-                       (self.h*self.saved_h - shift)*self.nx:
-                       (self.h*(self.saved_h + 1) - shift + 1)*self.nx]
-
-        cost = cvxpy.sum_entries(cvxpy.square(self.PQ_ch_t * (self.x - xgapref)))
-
-        return cost
 
     def get_backup_predicted_state(self):
         """Returns a predicted state trajectory over one horizon. Used if there
@@ -331,19 +303,89 @@ class TruckMPC(object):
         """Set the vehicle to be the leader or not. Default is false. """
         self.is_leader = is_leader
 
-    # Alternate cost calculation.
+    # Cholesky cost calculation.
+
+    def get_mpc_cost_cholesky(self):
+        """Returns the cost for the MPC problem. The cost is the combined cost
+        for tracking reference, timegap and input trajectories. If the vehicle
+        is the leader the timegap tracking cost is excluded. """
+        cost = self.get_state_reference_cost() + self.get_input_reference_cost()
+
+        if not self.is_leader:
+            gap_cost = self.get_timegap_cost()
+            cost = cost + gap_cost
+
+        return cost
+
+    def get_state_reference_cost(self):
+        """Returns the cost corresponding to state reference tracking. """
+        cost = cvxpy.sum_entries(cvxpy.square(self.PQ_ch_s * (self.x - self.xref)))
+
+        return cost
+
+    def get_input_reference_cost(self):
+        """Returns the cost corresponding to input reference tracking. """
+        cost = cvxpy.sum_entries(cvxpy.square(self.PR_ch * (self.u - self.uref)))
+
+        return cost
+
+    def get_timegap_cost(self):
+        """Returns the cost corresponding to timegap tracking. """
+        shift = int(round(self.timegap / self.dt))
+        xgapref = self.preceding_x[
+                       (self.h*self.saved_h - shift)*self.nx:
+                       (self.h*(self.saved_h + 1) - shift + 1)*self.nx]
+
+        cost = cvxpy.sum_entries(cvxpy.square(self.PQ_ch_t * (self.x - xgapref)))
+
+        return cost
+
+    # Quad form cost calculation.
 
     def get_state_P(self):
+        """Used at initialization. """
         P = sparse.kron(sparse.eye(self.h + 1), (1 - self.zeta)*self.Q)
+
         return P
 
     def get_input_P(self):
+        """Used at initialization."""
         P = sparse.kron(sparse.eye(self.h), self.R)
+
         return P
 
     def get_timegap_P(self):
+        """Used at initialization. """
         P = sparse.kron(sparse.eye(self.h + 1), self.zeta*self.Q)
+
         return P
+
+    def get_state_q(self):
+        q = self.state_Q_diag.dot(self.xref)
+
+        return q
+
+    def get_input_q(self):
+        q = self.R_diag.dot(self.acc_ref)
+
+        return q
+
+    def get_timegap_q(self):
+        xgapref = self.preceding_x[
+                  (self.h * self.saved_h - self.timegap_shift) * self.nx:
+                  (self.h * (self.saved_h + 1) - self.timegap_shift + 1) * self.nx]
+        q = self.timegap_Q_diag.dot(xgapref)
+
+        return q
+
+    def get_mpc_cost_quad_form(self):
+        cost = 0.5*cvxpy.quad_form(self.x, self.state_P) + self.get_state_q()*self.x + \
+            0.5*cvxpy.quad_form(self.u, self.input_P) + self.get_input_q()*self.u
+
+        if not self.is_leader:
+            cost = cost + 0.5*cvxpy.quad_form(self.x, self.timegap_P) + self.get_timegap_q()*self.x
+
+        return cost
 
 
 def main():
