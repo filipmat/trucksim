@@ -1,8 +1,9 @@
+float64 timestamp
 string id
-float32 x
-float32 y
-float32 yaw
-float32 yaw_rate
-float32 v
-float32 a
-float32 r
+float64 x
+float64 y
+float64 yaw
+float64 yaw_rate
+float64 v
+float64 a
+float64 r

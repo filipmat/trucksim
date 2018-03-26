@@ -37,22 +37,22 @@ class SimTrx(object):
 
         self.vehicle_id = vehicle_id
 
+        # Initialize ROS node.
+        rospy.init_node(self.vehicle_id, anonymous=True)
+
         # Subscriber for receiving speed control signal.
         rospy.Subscriber(control_topic_name, control_topic_type, self._callback)
 
         # Publisher for publishing vehicle position and velocity.
         self.pub = rospy.Publisher(mocap_topic_name, mocap_topic_type, queue_size=10)
 
-        # Fix so that standing still at start by sending command to itself through trxvehicle.py.
-        self.pwm_start_pub = rospy.Publisher('pwm_commands', PWM, queue_size=1)
-
-        # Initialize ROS node.
-        rospy.init_node(self.vehicle_id, anonymous=True)
-
         # ROS update rate.
         self.update_rate = rospy.Rate(frequency)
 
-        self.pwm_start_pub.publish(self.vehicle_id, 1500, 1500, 120)
+        # Fix so that standing still at start by sending command to itself through trxvehicle.py.
+        # Last command in trxvehicle.py is then set to the standstill values.
+        pwm_start_pub = rospy.Publisher('pwm_commands', PWM, queue_size=1)
+        pwm_start_pub.publish(self.vehicle_id, 1500, 1500, 120)
 
         print('Trx test vehicle initialized, id: {}'.format(rospy.get_name()))
 
@@ -72,8 +72,9 @@ class SimTrx(object):
             self.update_rate.sleep()
 
     def _publish_vehicle_state(self):
-        self.pub.publish(self.vehicle_id, self.x[0], self.x[1], self.x[2], self.yaw_rate,
-                         self.v, self.acceleration, self.radius)
+        t = rospy.get_time()
+        self.pub.publish(t, self.vehicle_id, self.x[0], self.x[1], self.x[2],
+                         self.yaw_rate, self.v, self.acceleration, self.radius)
 
     def _move(self):
         """Moves the vehicle as a unicycle and calculates velocity, yaw rate, etc. """

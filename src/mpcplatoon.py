@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 
+
+"""
+Class for controlling all vehicles in the platoon. Trajectories from one MPC is used in the
+follower. 
+"""
+
+
 import rospy
 import sys
 import time
@@ -8,7 +15,7 @@ import numpy
 from trucksim.msg import MocapState, PWM
 import path
 import frenetpid
-import truckmpc
+import old_mpc_solver
 import speed_profile
 import trxmodel
 import controllerGUI
@@ -21,34 +28,6 @@ def print_numpy(a):
     s += ' ]'
 
     print(s)
-
-
-class PathPosition(object):
-    """Class for keeping track of absolute vehicle position on the path.
-    The position increases with each lap, i.e. does not reset to zero. """
-    def __init__(self, pt):
-        self.pt = pt
-        self.position = 0
-        self.path_length = self.pt.get_path_length()
-        self.zero_passes = 0
-        # Allow backwards travel distance less than a fraction of path length.
-        self.backwards_fraction = 1./8
-
-    def update_position(self, xy):
-        """Updates the position on the path. """
-        pos = self.pt.get_position_on_path(xy)
-
-        if self.position > self.zero_passes*self.path_length + pos + self.path_length/8:
-            self.zero_passes += 1
-
-        self.position = self.zero_passes*self.path_length + pos
-
-    def get_position(self):
-        """Returns the position on the path. """
-        return self.position
-
-    def __str__(self):
-        return '{:.2f}'.format(self.position)
 
 
 class Controller(object):
@@ -110,17 +89,16 @@ class Controller(object):
             else:
                 leader = False
 
-            self.mpcs[vehicle_id] = truckmpc.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q, R,
-                                                      truck_length, safety_distance, timegap,
-                                                      xmin=xmin, xmax=xmax, umin=umin, umax=umax,
-                                                      x0=x0, vehicle_id=vehicle_id, saved_h=saved_h,
-                                                      is_leader=leader)
+            self.mpcs[vehicle_id] = old_mpc_solver.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q, R,
+                                                            truck_length, safety_distance, timegap,
+                                                            xmin=xmin, xmax=xmax, umin=umin, umax=umax,
+                                                            x0=x0, vehicle_id=vehicle_id, saved_h=saved_h,
+                                                            is_leader=leader)
 
-            self.path_positions[vehicle_id] = PathPosition(self.pt)
+            self.path_positions[vehicle_id] = path.PathPosition(self.pt)
             self.speed_pwms[vehicle_id] = 1500
 
-        print('\nController initialized. Vehicles {}.\n'.format(
-            self.vehicle_ids))
+        print('\nController initialized. Vehicles {}.\n'.format(self.vehicle_ids))
 
     def set_vopt(self, vopt):
         """Sets the optimal speed profile. """

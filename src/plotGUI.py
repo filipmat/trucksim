@@ -788,7 +788,7 @@ def main():
     y_radius = 1.20     # Ellipse y-radius.
     center = [0, -y_radius]  # The coordinates of the center of the ellipse.
     pts = 200           # Number of points on displayed reference path.
-    win_size = 600      # Size of window in pixels.
+    win_size = 500      # Size of window in pixels.
 
     root = Tk.Tk()
     try:

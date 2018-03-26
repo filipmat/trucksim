@@ -5,7 +5,7 @@ import time
 from matplotlib import pyplot
 
 import speed_profile
-import truckmpc
+import old_mpc_solver
 import path
 import frenetpid
 
@@ -25,7 +25,7 @@ class FrenetUnicycle(object):
         self.ID = ID
 
         self.frenet = frenetpid.FrenetPID(pt, kp, ki, kd)
-        self.path_pos = PathPosition(pt, [x[0], x[1]])
+        self.path_pos = path.PathPosition(pt, [x[0], x[1]])
 
     def update(self, delta_t):
         """Gets a new control input and moves the vehicle. """
@@ -94,44 +94,6 @@ class FrenetUnicycle(object):
         return s
 
 
-class PathPosition(object):
-    """Class for keeping track of absolute vehicle position on the path.
-    The position increases with each lap, i.e. does not reset to zero. """
-    def __init__(self, pt, xy):
-        self.pt = pt
-        self.position = self.pt.get_position_on_path(xy)
-        self.path_length = self.pt.get_path_length()
-        self.zero_passes = 0
-        # Allow backwards travel distance less than a fraction of path length.
-        self.backwards_fraction = 1./8
-
-    def update_position(self, xy):
-        """Updates the position on the path. """
-        pos = self.pt.get_position_on_path(xy)
-
-        if (self.position >
-                self.zero_passes*self.path_length + pos + self.path_length/8):
-            self.zero_passes += 1
-
-        self.position = self.zero_passes*self.path_length + pos
-
-    def get_position(self):
-        """Returns the position on the path. """
-        return self.position
-
-    @staticmethod
-    def order_positions(path_positions):
-        for i in range(len(path_positions)):
-
-            if i > 0:
-                while (path_positions[i].position >
-                       path_positions[i - 1].position):
-                    path_positions[i].position -= path_positions[i].path_length
-
-    def __str__(self):
-        return '{:.2f}'.format(self.position)
-
-
 def print_numpy(a):
     str = '['
     for v in a.flatten():
@@ -179,12 +141,12 @@ class SimMPC(object):
                 leader = True
             else:
                 leader = False
-            self.mpcs[i] = truckmpc.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q,
-                                             R, truck_length, safety_distance,
-                                             timegap, xmin=xmin, xmax=xmax,
-                                             umin=umin, umax=umax, x0=x0,
-                                             vehicle_id=vehicle.ID,
-                                             saved_h=saved_h, is_leader=leader)
+            self.mpcs[i] = old_mpc_solver.TruckMPC(Ad, Bd, delta_t, horizon, zeta, Q,
+                                                   R, truck_length, safety_distance,
+                                                   timegap, xmin=xmin, xmax=xmax,
+                                                   umin=umin, umax=umax, x0=x0,
+                                                   vehicle_id=vehicle.ID,
+                                                   saved_h=saved_h, is_leader=leader)
 
         print('\nSimulation initialized. ')
 
@@ -264,9 +226,10 @@ class SimMPC(object):
                 timegap = 0
                 if j > 0:
                     distance = self.vehicles[j - 1].get_path_pos() - path_pos
-                    try:
-                        timegap = distance/vehicle.get_velocity()
-                    except ZeroDivisionError:
+                    vel = vehicle.get_velocity()
+                    if vel != 0:
+                        timegap = distance/vel
+                    else:
                         timegap = 0
 
                     if self.verbose:

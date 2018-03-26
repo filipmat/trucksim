@@ -486,6 +486,54 @@ class Path:
         self._lp = False
 
 
+class PathPosition(object):
+    """Class for keeping track of absolute vehicle position on the path.
+    The position increases with each lap, i.e. does not reset to zero. """
+    def __init__(self, pt, xy=None):
+        self.pt = pt
+        if xy is None:
+            self.position = 0
+        else:
+            self.position = self.pt.get_position_on_path(xy)
+        self.path_length = self.pt.get_path_length()
+        self.zero_passes = 0
+        # Allow backwards travel distance less than a fraction of path length.
+        self.backwards_fraction = 1./8
+
+    def update_position(self, xy):
+        """Updates the position on the path. """
+        # TODO: maybe support backwards traveling.
+        pos = self.pt.get_position_on_path(xy)
+
+        if self.position > self.zero_passes*self.path_length + pos + \
+                self.path_length * self.backwards_fraction:
+            self.zero_passes += 1
+
+        self.position = self.zero_passes*self.path_length + pos
+
+    def get_position(self):
+        """Returns the position on the path. """
+        return self.position
+
+    @staticmethod
+    def order_positions(path_positions):
+        for i in range(len(path_positions)):
+
+            if i > 0:
+                while (path_positions[i].position >
+                       path_positions[i - 1].position):
+                    path_positions[i].position -= path_positions[i].path_length
+
+    def set_position_behind(self, position):
+        """Sets the position so that it is behind the specified position. """
+        while self.position > position:
+            self.position = self.position - self.path_length
+            self.zero_passes = self.zero_passes - 1
+
+    def __str__(self):
+        return '{:.2f}'.format(self.position)
+
+
 class NewPath:
     """Class for defining a custom path. """
 

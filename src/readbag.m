@@ -1,5 +1,5 @@
 %%
-filename = 'output06.txt';
+filename = 'out00.txt';
 
 fid = fopen(filename);
 firstline = fgetl(fid);

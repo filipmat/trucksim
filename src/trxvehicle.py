@@ -3,7 +3,7 @@
 """
 Usage: rosrun trucksim trxvehicle.py [vehicle_id]
 
-Receives vehicle commands from controllers etc and sends them to the vehicle. Handles logging of
+Receives vehicle commands from controllers etc. and sends them to the vehicle. Handles logging of
 vehicle state and sent commands.
 """
 
@@ -56,13 +56,15 @@ class TrxVehicle(object):
         self.trx_publisher = rospy.Publisher(trx_topic_name, Twist, queue_size=1)
 
         # Subscribe to PWM signals from controller (e.g. keyboardctrl.py).
-        rospy.Subscriber(pwm_topic_name, PWM, self.teleop)
+        rospy.Subscriber(pwm_topic_name, PWM, self.pwm_callback)
 
         # Service for starting or stopping recording.
         rospy.Service(logging_service_name, SetMeasurement, self.set_measurement)
 
         # Frequency to send control commands at.
         self.control_rate = rospy.Rate(control_frequency)
+
+        print('{} initialized. '.format(self.vehicle_id))
 
         # Loop control command sender.
         self.run()
@@ -103,7 +105,7 @@ class TrxVehicle(object):
 
         return filename
 
-    def teleop(self, data):
+    def pwm_callback(self, data):
         """Callback for subscriber that receives PWM commands from e.g. controller. """
         if self.vehicle_id == data.id:
             self.steering_command = data.angle
@@ -170,7 +172,8 @@ def main(args):
             trx_topic_name = vehicle_id + '/' + trx_topic_name
             print('Simulated vehicle. ')
     except (ValueError, IndexError) as e:
-        print('Error: invalid second argument entered: {}'.format(e))
+        if len(args) > 2:
+            print('Error: invalid second argument entered: {}'.format(e))
 
     pwm_topic_name = 'pwm_commands'     # Topic that pwm commands are sent over.
     mocap_topic_name = 'mocap_state'    # Topic that the vehicle states from mocap are sent over.

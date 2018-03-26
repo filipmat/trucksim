@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 
+
+"""
+Class for controlling one vehicle with the keyboard.
+"""
+
+
 import rospy
 import curses
 import sys
@@ -152,9 +158,9 @@ class CursesControl(object):
         if self.angle == self.angle_zero:
             txt = 'straight     '
         elif self.sign(self.angle - self.angle_zero) == self.sign(self.angle_step):
-            txt = 'turning right'
+            txt = 'turning left'
         else:
-            txt = 'turning left '
+            txt = 'turning right '
 
         self.stdscr.addstr(self.h + 2, 20, txt)
         self.stdscr.addstr(self.h + 2, 40, '{:.2f}'.format(self.angle))

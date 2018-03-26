@@ -1,3 +1,4 @@
 string id
-float64 timestamp
-float64[] state
+float64[] timestamps
+float64[] velocity
+float64[] position
