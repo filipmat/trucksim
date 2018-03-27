@@ -9,15 +9,6 @@ import cvxpy
 import scipy.sparse as sparse
 
 
-def print_numpy(a):
-    s = '['
-    for v in a.flatten():
-        s += ' {:.2f}'.format(v)
-    s += ' ]'
-
-    print(s)
-
-
 class MPC(object):
 
     def __init__(self, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length, safety_distance, timegap,
@@ -71,12 +62,12 @@ class MPC(object):
         else:
             self.x0 = x0
 
-        # Put together from reference trajectories above.
+        # Reference trajectories.
         self.xref = numpy.zeros((self.h + 1)*self.nx)
         self.uref = numpy.zeros(self.h*self.nu)
         self.xgapref = numpy.zeros((self.h + 1) * self.nx)
 
-        # Problem
+        # Problem.
         self.prob = cvxpy.Problem(cvxpy.Minimize(1))
 
         # Problem constraints.
@@ -85,7 +76,7 @@ class MPC(object):
         dynamics_constraints1 = self._get_dynamics_constraints_part_one()  # Update during mpc.
         dynamics_constraints2 = self._get_dynamics_constraints_part_two()     # Fixed.
 
-        self.prob.constraints += state_constraint1
+        self.prob.constraints = state_constraint1
         self.prob.constraints += state_constraint2
         self.prob.constraints += input_constraint1
         self.prob.constraints += input_constraint2
@@ -162,6 +153,10 @@ class MPC(object):
 
     def solve_mpc(self, vopt, x0, current_time=None, preceding_timestamps=None,
                   preceding_velocities=None, preceding_positions=None):
+        """Solves the MPC problem.
+        Computes reference trajectories from optimal speed profile and
+        current state. If the vehicle is a follower it also computes the state reference from the
+        timegap. Updates the constraints and cost and solves the problem. """
         self.x0 = x0
         self._compute_references(self.x0[1], vopt)
 
@@ -272,7 +267,8 @@ class MPC(object):
         """Returns the predicted velocity and position from the MPC, starting at x0. If there is
         no trajectories available a backup state is returned, which assumes zero acceleration. """
         try:
-            return self.x.value[0::2].flatten(), self.x.value[1::2].flatten()
+            return numpy.squeeze(numpy.asarray(self.x.value[0::2].flatten())), \
+                   numpy.squeeze(numpy.asarray(self.x.value[1::2].flatten()))
         except TypeError:
             return self._get_backup_predicted_state()
 
@@ -291,15 +287,14 @@ class MPC(object):
 
         return c
 
-def main():
-    pass
 
+def print_numpy(a):
+    s = '['
+    for v in a.flatten():
+        s += ' {:.2f}'.format(v)
+    s += ' ]'
 
-if __name__ == '__main__':
-    main()
-
-
-
+    print(s)
 
 
 

@@ -91,12 +91,12 @@ class CursesControl(object):
                 self.publish_values()
 
             elif key == curses.KEY_LEFT or key == ord('a'):
-                self.angle = self.angle + self.angle_step
+                self.angle = self.angle - self.angle_step
                 self.set_angle()
                 self.publish_values()
 
             elif key == curses.KEY_RIGHT or key == ord('d'):
-                self.angle = self.angle - self.angle_step
+                self.angle = self.angle + self.angle_step
                 self.set_angle()
                 self.publish_values()
 
@@ -189,25 +189,15 @@ def main(screen):
     topic_type = PWM
     topic_name = 'pwm_commands'
 
-    # velocity_zero = 0
-    # velocity_min = -4
-    # velocity_max = 4
-    # velocity_step = 1
-    #
-    # angle_zero = 0
-    # angle_min = -4
-    # angle_max = 4
-    # angle_step = 1
-
     velocity_zero = 1500
     velocity_min = 900
     velocity_max = 2100
-    velocity_step = -20
+    velocity_step = 10
 
     angle_zero = 1500
     angle_min = 900
     angle_max = 2100
-    angle_step = 20
+    angle_step = 10
 
     if len(sys.argv) > 1:
         vehicle_id = sys.argv[1]

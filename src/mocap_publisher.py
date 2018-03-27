@@ -78,7 +78,7 @@ class MocapPublisher(object):
             self.rate.sleep()
 
     def _publish_values(self):
-        self.pub.publish(self.mocap_vehicle_id, self.x, self.y, self.yaw, self.yaw_rate, self.v,
+        self.pub.publish(rospy.get_time(), self.mocap_vehicle_id, self.x, self.y, self.yaw, self.yaw_rate, self.v,
                          self.a, self.r)
 
     def _update_pose(self, x, y, yaw):

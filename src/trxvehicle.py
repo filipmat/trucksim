@@ -19,6 +19,9 @@ from trucksim.srv import SetMeasurement
 from geometry_msgs.msg import Twist
 
 
+# TODO: handle sending gear command.
+
+
 class TrxVehicle(object):
 
     def __init__(self, vehicle_id, control_frequency=20,
@@ -44,7 +47,7 @@ class TrxVehicle(object):
         self.gear_command = 120
 
         # ROS node.
-        rospy.init_node(self.vehicle_id, anonymous=True)
+        rospy.init_node(self.vehicle_id + '_dispatch', anonymous=False)
 
         # Publisher that publishes the state and commands. Currently unused.
         self.vehicle_state_pub = rospy.Publisher('vehicle_state', VehicleState, queue_size = 1)
@@ -150,12 +153,10 @@ class TrxVehicle(object):
     def send_commands(self):
         """Sends commands to vehicle. """
         trx_msg = Twist()
-        trx_msg.linear.x = self.velocity_command
-        trx_msg.angular.z = self.steering_command
+        trx_msg.linear.x = int(self.velocity_command)
+        trx_msg.angular.z = int(self.steering_command)
 
         self.trx_publisher.publish(trx_msg)
-
-        # TODO: Send gear values.
 
 
 def main(args):

@@ -50,13 +50,11 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate messages in the 'msg' folder
 add_message_files(
     FILES
-    vehiclespeed.msg
-    vehicleomega.msg
-    vehicleposition.msg
     PWM.msg
     MocapState.msg
     VehicleState.msg
     AssumedState.msg
+    ControllerRun.msg
 )
 
 ## Generate services in the 'srv' folder

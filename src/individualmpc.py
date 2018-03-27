@@ -17,7 +17,7 @@ import frenetpid
 import controllerGUI
 import trxmodel
 
-from trucksim.msg import MocapState, PWM, AssumedState
+from trucksim.msg import MocapState, PWM, AssumedState, ControllerRun
 
 # TODO: maybe have different update frequencies for path tracking and velocity control.
 
@@ -57,6 +57,8 @@ class Controller(object):
         self.first_callback = True
         self.starting_phase_start_time = 0
 
+        self.verbose = True     # If printing stuff in terminal.
+
         # PWM values for the speed, wheel angle, and gears.
         self.speed_pwm = 1500
         self.angle_pwm = 1500
@@ -70,6 +72,8 @@ class Controller(object):
         # Update interval.
         self.dt = delta_t
         self.rate = rospy.Rate(1. / self.dt)
+
+        self.k = 0  # Counter for printing in intervals.
 
         # Old and predicted velocities and positions.
         saved_states = int(timegap*1.5/delta_t) + horizon   # One horizon plus enough old states.
@@ -90,6 +94,9 @@ class Controller(object):
         # Subscriber for receiving assumed state of preceding vehicle.
         rospy.Subscriber(preceding_id + '/assumed_state', AssumedState,
                          self._assumed_state_callback)
+
+        # Subscriber for starting and stopping the controller.
+        rospy.Subscriber('global/run', ControllerRun, self._start_stop_callback)
 
         # MPC controller for speed control.
         self.mpc = distributed_mpc_solver.MPC(Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
@@ -118,7 +125,8 @@ class Controller(object):
 
             preceding_position = self.preceding_positions[-(self.h + 1)]
 
-            if self.path_position.get_position() - 0.01 > preceding_position:
+            if (self.path_position.get_position() - 0.01 > preceding_position or
+                    self.path_position.get_position() + 0.01 < preceding_position):
                 self.path_position.set_position_behind(preceding_position)
                 self.positions[:] = self.path_position.get_position()
 
@@ -161,15 +169,17 @@ class Controller(object):
         if not self.running:
             return
 
-        if self.starting_phase:
+        if self.starting_phase and (self.verbose or (not self.verbose and self.k == 0)):
             print('{:.1f}/{:.1f} Starting phase... '.format(
                 rospy.get_time() - self.starting_phase_start_time, self.starting_phase_duration))
 
+        # Starting phase over after a certain duration.
         if (self.starting_phase and
                 rospy.get_time() - self.starting_phase_start_time > self.starting_phase_duration):
             self.starting_phase = False
             print('Controller running... ')
 
+        # Solve MPC problem when not in starting phase.
         if not self.starting_phase:
 
             self._update_current_state()
@@ -182,6 +192,26 @@ class Controller(object):
             self.speed_pwm = self._get_throttle_input()
 
             self._publish_control_commands()
+
+            # Print stuff.
+            if self.k % int(1./self.dt) == 0 and self.verbose:
+                acc = self.mpc.get_instantaneous_acceleration()
+                opt_v = self.vopt.get_speed_at(self.path_position.get_position())
+
+                info = 'v = {:.2f} ({:.2f}), a = {:5.2f}, pwm = {:.1f}'.format(
+                    self.pose[3], opt_v, acc, self.speed_pwm)
+
+                if not self.is_leader:
+                    try:
+                        timegap = (self.preceding_positions[-(self.h + 1)] -
+                                   self.path_position.get_position()) / self.pose[3]
+                    except ZeroDivisionError:
+                        timegap = 0
+                    info += ', t = {:.2f}'.format(timegap)
+
+                print(info)
+
+        self.k += 1
 
     def _update_current_state(self):
         """Shifts the old states and adds the current state. """
@@ -215,10 +245,15 @@ class Controller(object):
 
     def _get_throttle_input(self):
         """Returns the throttle command. Calculated from MPC and vehicle model. """
+        if not self.running:
+            return self.speed_pwm
+
         acceleration = self.mpc.get_instantaneous_acceleration()
-        new_velocity = trxmodel.throttle_input_to_linear_velocity(self.speed_pwm) + \
-            acceleration * self.dt
-        speed_pwm = trxmodel.linear_velocity_to_throttle_input(new_velocity)
+
+        new_vel = self.pose[3] + acceleration * self.dt
+        pwm_diff = trxmodel.linear_velocity_to_throttle_input(new_vel) - \
+            trxmodel.linear_velocity_to_throttle_input(self.pose[3])
+        speed_pwm = self.speed_pwm + pwm_diff
 
         return speed_pwm
 
@@ -236,8 +271,20 @@ class Controller(object):
         """Publishes the current desired control inputs to the vehicle. """
         self.pwm_publisher.publish(self.vehicle_id, self.speed_pwm, self.angle_pwm, self.gear_pwm)
 
+    def _start_stop_callback(self, data):
+        """Callback for the subscriber on topic used for starting or stopping the controller. """
+        if data.run:
+            self.start()
+        else:
+            self.stop()
+
+        return 1
+
     def stop(self):
         """Stops/pauses the controller. """
+        self.speed_pwm = 1500
+        self._publish_control_commands()
+        self.rate.sleep()
         self.speed_pwm = 1500
         self._publish_control_commands()
 
@@ -257,14 +304,13 @@ class Controller(object):
             self.starting_phase = True
             self.first_callback = True
             self.speed_pwm = 1500
+            self.k = 0
             print('Controller started.')
         else:
             print('Controller is already running. ')
 
     def run(self):
-        """Runs the controller. Used when no GUI. """
-        self.start()
-
+        """Runs the controller. Used when global GUI. """
         while not rospy.is_shutdown():
             self.control()
             self.rate.sleep()
@@ -362,8 +408,8 @@ def main(args):
     )
 
     # Start controller.
-    # controller.run()
-    controllerGUI.ControllerGUI(controller)
+    controller.run()
+    #controllerGUI.ControllerGUI(controller)
 
 
 if __name__ == '__main__':

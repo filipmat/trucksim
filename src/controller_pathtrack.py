@@ -75,7 +75,7 @@ class Controller(object):
             self.publish_values()
 
             # Display control error.
-            print('Control error: {:5.2f}'.format(self.frenet.get_y_error()))
+            #print('Control error: {:5.2f}'.format(self.frenet.get_y_error()))
 
     def publish_values(self):
         """Publish the control values to the topic. """

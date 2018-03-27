@@ -527,8 +527,12 @@ class PathPosition(object):
     def set_position_behind(self, position):
         """Sets the position so that it is behind the specified position. """
         while self.position > position:
-            self.position = self.position - self.path_length
-            self.zero_passes = self.zero_passes - 1
+            self.position -= self.path_length
+            self.zero_passes -= 1
+
+        while self.position < position - self.path_length:
+            self.position += self.path_length
+            self.zero_passes += 1
 
     def __str__(self):
         return '{:.2f}'.format(self.position)

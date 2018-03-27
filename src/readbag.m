@@ -1,5 +1,5 @@
 %%
-filename = 'out00.txt';
+filename = 'ut02.txt';
 
 fid = fopen(filename);
 firstline = fgetl(fid);
@@ -30,62 +30,107 @@ gear = C{12}(~standstill_indices);
 alpha = atan(yaw_rate.*0.33./v);
 
 %%
-left = yaw_rate > 0;
+%left = and(yaw_rate > 0, steering < 1500);
+left = and(alpha > 0, and(alpha < 0.55, steering < 1500));
+%right = and(yaw_rate < 0, steering > 1520);
+right = and(alpha < 0, and(alpha > -0.6, steering > 1520));
 
 steering_left = steering(left);
-steering_right = steering(~left);
+steering_right = steering(right);
 r_left = r(left);
-r_right = r(~left);
+r_right = r(right);
 yaw_rate_left = yaw_rate(left);
-yaw_rate_right = yaw_rate(~left);
+yaw_rate_right = yaw_rate(right);
 alpha_left = alpha(left);
-alpha_right = alpha(~left);
+alpha_right = alpha(right);
 
-forward = velocity < 1500;
+forward = and(velocity > 1500, v < 3);
 
 v_forward = v(forward);
 velocity_forward = velocity(forward);
 a_forward = a(forward);
 
 % Steering as function of wheel angle.
-angle_left_k = [alpha_left alpha_left.^0] \ steering_left;
-angle_right_k = [alpha_right alpha_right.^0] \ steering_right;
+angle_left_k = [alpha_left.^0 alpha_left alpha_left.^2] \ steering_left;
+angle_right_k = [alpha_right.^0 alpha_right alpha_right.^2] \ ...
+    steering_right;
 
 % Wheel angle as function of steering. 
-steering_right_k = [steering_right steering_right.^0] \ alpha_right;
-steering_left_k = [steering_left steering_left.^0] \ alpha_left;
+steering_right_k = [steering_right.^0 steering_right steering_right.^2] ...
+    \ alpha_right;
+steering_left_k = [steering_left.^0 steering_left steering_left.^2] ...
+    \ alpha_left;
 
 % Throttle as function of speed. 
-v_forward_k = [v_forward v_forward.^0] \ velocity_forward;
+v_forward_k = [v_forward.^0 v_forward v_forward.^2] \ velocity_forward;
 
+% Speed as function of throttle
+velocity_forward_k = [velocity_forward.^0 velocity_forward ...
+    velocity_forward.^2] \ v_forward;
 
-%%
+%% speed to throttle input
 v_forward_sorted = sort(v_forward);
-v_forward_test = v_forward_k(1)*v_forward_sorted + ...
-    v_forward_k(2)*v_forward_sorted.^0;
+velocity_forward_test = v_forward_k(1)*v_forward_sorted.^0 + ...
+    v_forward_k(2)*v_forward_sorted + ...
+    v_forward_k(3)*v_forward_sorted.^2;
 
 figure
 plot(v_forward, velocity_forward, '.')
 hold on
-plot(v_forward_sorted, v_forward_test, 'r')
+plot(v_forward_sorted, velocity_forward_test, 'r')
 
-%%
+%% right turn (wheel angle < 0) to steering input
 alpha_right_sorted = sort(alpha_right);
-steering_right_test = angle_right_k(1)*alpha_right_sorted + ...
-    angle_right_k(2)*alpha_right_sorted.^0;
+steering_right_test = angle_right_k(1)*alpha_right_sorted.^0 + ...
+    angle_right_k(2)*alpha_right_sorted + ...
+    angle_right_k(3)*alpha_right_sorted.^2;
 
 figure
 plot(alpha_right, steering_right, '.')
 hold on
 plot(alpha_right_sorted, steering_right_test, 'r')
 
-%%
+%% left turn (wheel angle > 0) to steering input
 alpha_left_sorted = sort(alpha_left);
-steering_left_test = angle_left_k(1)*alpha_left_sorted + ...
-    angle_left_k(2)*alpha_left_sorted.^0;
+steering_left_test = angle_left_k(1)*alpha_left_sorted.^0 + ...
+    angle_left_k(2)*alpha_left_sorted + ...
+    angle_left_k(3)*alpha_left_sorted.^2;
 
 figure
 plot(alpha_left, steering_left, '.')
 hold on
 plot(alpha_left_sorted, steering_left_test, 'r')
+
+%% throttle input to speed
+velocity_forward_sorted = sort(velocity_forward);
+v_forward_test = velocity_forward_k(1)*velocity_forward_sorted.^0 + ...
+    velocity_forward_k(2)*velocity_forward_sorted + ...
+    velocity_forward_k(3)*velocity_forward_sorted.^2;
+
+figure
+plot(velocity_forward, v_forward, '.')
+hold on
+plot(velocity_forward_sorted, v_forward_test, 'r')
+
+%% wheel angle to steering input
+steering_right_sorted = sort(steering_right);
+alpha_right_test = steering_right_k(1)*steering_right_sorted.^0 + ...
+    steering_right_k(2)*steering_right_sorted + ...
+    steering_right_k(3)*steering_right_sorted.^2;
+
+figure
+plot(steering_right, alpha_right, '.')
+hold on
+plot(steering_right_sorted, alpha_right_test, 'r')
+
+%% wheel angle to steering input
+steering_left_sorted = sort(steering_left);
+alpha_left_test = steering_left_k(1)*steering_left_sorted.^0 + ...
+    steering_left_k(2)*steering_left_sorted + ...
+    steering_left_k(3)*steering_left_sorted.^2;
+
+figure
+plot(steering_left, alpha_left, '.')
+hold on
+plot(steering_left_sorted, alpha_left_test, 'r')
 

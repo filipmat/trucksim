@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 
+
+"""
+Class for simulating a trx vehicle. Receives input commands and sends position information.
+"""
+
+
 import rospy
 import sys
 import math
@@ -11,7 +17,6 @@ from geometry_msgs.msg import Twist
 
 
 class SimTrx(object):
-    """Class for simulating the movement of a vehicle. The vehicle is identified with an ID. """
 
     def __init__(self, vehicle_id,
                  mocap_topic_name, mocap_topic_type, control_topic_name, control_topic_type,
@@ -38,7 +43,7 @@ class SimTrx(object):
         self.vehicle_id = vehicle_id
 
         # Initialize ROS node.
-        rospy.init_node(self.vehicle_id, anonymous=True)
+        rospy.init_node(self.vehicle_id + '_simulated', anonymous=False)
 
         # Subscriber for receiving speed control signal.
         rospy.Subscriber(control_topic_name, control_topic_type, self._callback)
@@ -51,14 +56,19 @@ class SimTrx(object):
 
         # Fix so that standing still at start by sending command to itself through trxvehicle.py.
         # Last command in trxvehicle.py is then set to the standstill values.
-        pwm_start_pub = rospy.Publisher('pwm_commands', PWM, queue_size=1)
-        pwm_start_pub.publish(self.vehicle_id, 1500, 1500, 120)
+        self.pwm_start_pub = rospy.Publisher('pwm_commands', PWM, queue_size=1)
 
-        print('Trx test vehicle initialized, id: {}'.format(rospy.get_name()))
+        self._initialize_standstill()
+
+    def _initialize_standstill(self):
+        for i in range(5):
+            self.update_rate.sleep()
+            self.pwm_start_pub.publish(self.vehicle_id, 1500, 1500, 120)
+
+        print('Trx test vehicle initialized, id: {}'.format(self.vehicle_id))
 
     def _callback(self, data):
-        """Method called when subscriber receives data. Updates the input if the
-        published ID is the same as the ID of the node. """
+        """Method called when subscriber receives data. Updates the input. """
         self.u[0] = trxmodel.throttle_input_to_linear_velocity(data.linear.x)
         self.u[1] = trxmodel.steering_input_to_angular_velocity(data.angular.z, self.v)
 
@@ -121,7 +131,7 @@ def main(args):
         sys.exit()
 
     vehicle_id = args[1]
-    frequency = 40
+    frequency = 20
     mocap_topic_name = 'mocap_state'
     mocap_topic_type = MocapState
     control_topic_name = vehicle_id + '/cmd_vel'
