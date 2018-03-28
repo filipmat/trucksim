@@ -31,6 +31,10 @@ class MPC(object):
         self.x = cvxpy.Variable((self.h + 1) * self.nx)
         self.u = cvxpy.Variable(self.h * self.nu)
 
+        v_slack_cost_factor = 100
+        self.v_slack = cvxpy.Variable(self.h + 1)
+        self.v_slack_P = numpy.eye(self.h + 1)*v_slack_cost_factor
+
         self.inf = 1000000  # "Infinity" used when there are no limits given.
 
         self.is_leader = is_leader
@@ -73,15 +77,16 @@ class MPC(object):
         self.SAFETY_CONSTRAINTS_ACTIVE = True   # TODO: remove.
 
         # Problem constraints.
-        state_constraint1, state_constraint2 = self._get_state_constraints()    # Fixed.
-        input_constraint1, input_constraint2 = self._get_input_constraints()    # Fixed.
+        state_constraint_lower = self._get_lower_state_constraints()    # Fixed
+        state_constraint_upper = self._get_upper_state_constraints()    # Fixed
+        input_constraint_lower, input_constraint_upper = self._get_input_constraints()    # Fixed.
         dynamics_constraints1 = self._get_dynamics_constraints_part_one()       # Update during mpc.
         dynamics_constraints2 = self._get_dynamics_constraints_part_two()       # Fixed.
 
-        self.prob.constraints = state_constraint1
-        self.prob.constraints += state_constraint2
-        self.prob.constraints += input_constraint1
-        self.prob.constraints += input_constraint2
+        self.prob.constraints = state_constraint_lower
+        self.prob.constraints += state_constraint_upper
+        self.prob.constraints += input_constraint_lower
+        self.prob.constraints += input_constraint_upper
         self.prob.constraints += dynamics_constraints1  # Update during mpc.
         self.prob.constraints += dynamics_constraints2
         if not self.is_leader and self.SAFETY_CONSTRAINTS_ACTIVE:
@@ -99,14 +104,20 @@ class MPC(object):
 
         self.timegap_shift = int(round(self.timegap / self.dt))
 
-    def _get_state_constraints(self):
-        """Returns the constraints corresponding to state limits. Called on initializtation. """
+    def _get_lower_state_constraints(self):
+        """Returns the lower constraints for the states. Called on initialization. """
         AX = sparse.eye((self.h + 1) * self.nx)
-
-        upper = numpy.tile(self.xmax, self.h + 1)
         lower = numpy.tile(self.xmin, self.h + 1)
 
-        return [AX * self.x <= upper], [AX * self.x >= lower]
+        return [AX * self.x >= lower]
+
+    def _get_upper_state_constraints(self):
+        """Returns the upper constraints for the states. Includes the slack variable for velocity
+        limitation. Called on initialization. """
+        AX = sparse.kron(sparse.eye(self.h + 1), [1, 0])
+        upper = numpy.tile(self.xmax[0], self.h + 1)
+
+        return [AX*self.x - self.v_slack <= upper]
 
     def _get_input_constraints(self):
         """Returns the constraints corrseponding to input limits. Called on initialization. """
@@ -142,14 +153,11 @@ class MPC(object):
         target_time = current_time - self.dt + numpy.arange(self.h + 1) * self.dt
         preceding_pos = numpy.interp(target_time, preceding_timestamps, preceding_positions)
 
+        AX = sparse.kron(sparse.eye(self.h + 1), [0, 1])
+
         posmax = preceding_pos - self.truck_length - self.safety_distance
-        vmax = numpy.ones(self.h + 1)*self.inf
 
-        statemax = self._interleave_vectors(vmax, posmax)
-
-        AS = sparse.eye((self.h + 1)*self.nx)
-
-        constraints = [AS * self.x <= statemax]
+        constraints = [AX * self.x < posmax]
 
         return constraints
 
@@ -231,7 +239,8 @@ class MPC(object):
         """Returns the mpc cost for the current iteration. """
         cost = 0.5*cvxpy.quad_form(self.x, self.state_P) + \
                self.state_Q_diag.dot(self.xref)*self.x + \
-               0.5*cvxpy.quad_form(self.u, self.input_P) + self.R_diag.dot(self.uref)*self.u
+               0.5*cvxpy.quad_form(self.u, self.input_P) + self.R_diag.dot(self.uref)*self.u + \
+               cvxpy.quad_form(self.v_slack, self.v_slack_P)
 
         if not self.is_leader:
             timegap_q = self.timegap_Q_diag.dot(self.xgapref)
