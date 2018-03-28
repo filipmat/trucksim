@@ -35,6 +35,10 @@ class MPC(object):
         self.v_slack = cvxpy.Variable(self.h + 1)
         self.v_slack_P = numpy.eye(self.h + 1)*v_slack_cost_factor
 
+        safety_slack_cost_factor = 100
+        self.safety_slack = cvxpy.Variable(self.h + 1)
+        self.safety_slack_P = numpy.eye(self.h + 1)*safety_slack_cost_factor
+
         self.inf = 1000000  # "Infinity" used when there are no limits given.
 
         self.is_leader = is_leader
@@ -80,8 +84,8 @@ class MPC(object):
         state_constraint_lower = self._get_lower_state_constraints()    # Fixed
         state_constraint_upper = self._get_upper_state_constraints()    # Fixed
         input_constraint_lower, input_constraint_upper = self._get_input_constraints()    # Fixed.
-        dynamics_constraints1 = self._get_dynamics_constraints_part_one()       # Update during mpc.
-        dynamics_constraints2 = self._get_dynamics_constraints_part_two()       # Fixed.
+        dynamics_constraints1 = self._get_x0_constraint()       # Update during mpc.
+        dynamics_constraints2 = self._get_dynamics_constraints()       # Fixed.
 
         self.prob.constraints = state_constraint_lower
         self.prob.constraints += state_constraint_upper
@@ -127,7 +131,7 @@ class MPC(object):
 
         return [AU * self.u <= upper], [AU * self.u >= lower]
 
-    def _get_dynamics_constraints_part_one(self):
+    def _get_x0_constraint(self):
         """Returns the constraints specifying that x(0) = x0. Called each iteration. """
         AA = sparse.hstack([sparse.eye(self.nx), sparse.csc_matrix((self.nx, self.h*self.nx))])
 
@@ -135,7 +139,7 @@ class MPC(object):
 
         return constraint
 
-    def _get_dynamics_constraints_part_two(self):
+    def _get_dynamics_constraints(self):
         """Returns the constraints for x(k+1) = Ax(k) + Bu(k). Called on initialization. """
         AA = sparse.kron(sparse.hstack([sparse.eye(self.h), sparse.csc_matrix((self.h, 1))]),
                          self.Ad) + \
@@ -157,7 +161,7 @@ class MPC(object):
 
         posmax = preceding_pos - self.truck_length - self.safety_distance
 
-        constraints = [AX * self.x < posmax]
+        constraints = [AX * self.x - self.safety_slack < posmax]
 
         return constraints
 
@@ -180,7 +184,7 @@ class MPC(object):
             self._update_safety_constraints(current_time, preceding_timestamps,
                                             preceding_positions)
 
-        self._update_dynamics_constraints()
+        self._update_x0_constraint()
 
         cost = self._get_mpc_cost()
         self.prob.objective = cvxpy.Minimize(cost)
@@ -193,9 +197,9 @@ class MPC(object):
             print('status: {}'.format(self.prob.status))
             self.status = 'Could not solve MPC'
 
-    def _update_dynamics_constraints(self):
+    def _update_x0_constraint(self):
         """Updates the first dynamics constraint x(0) = x0. """
-        self.prob.constraints[4] = self._get_dynamics_constraints_part_one()[0]
+        self.prob.constraints[4] = self._get_x0_constraint()[0]
 
     def _update_safety_constraints(self, current_time, preceding_timestamps, preceding_positions):
         """Updates the safety constraint. """
@@ -239,8 +243,10 @@ class MPC(object):
         """Returns the mpc cost for the current iteration. """
         cost = 0.5*cvxpy.quad_form(self.x, self.state_P) + \
                self.state_Q_diag.dot(self.xref)*self.x + \
-               0.5*cvxpy.quad_form(self.u, self.input_P) + self.R_diag.dot(self.uref)*self.u + \
-               cvxpy.quad_form(self.v_slack, self.v_slack_P)
+               0.5*cvxpy.quad_form(self.u, self.input_P) + \
+               self.R_diag.dot(self.uref)*self.u + \
+               cvxpy.quad_form(self.v_slack, self.v_slack_P) + \
+               cvxpy.quad_form(self.safety_slack, self.safety_slack_P)
 
         if not self.is_leader:
             timegap_q = self.timegap_Q_diag.dot(self.xgapref)
