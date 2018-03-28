@@ -78,8 +78,8 @@ class MocapPublisher(object):
             self.rate.sleep()
 
     def _publish_values(self):
-        self.pub.publish(rospy.get_time(), self.mocap_vehicle_id, self.x, self.y, self.yaw, self.yaw_rate, self.v,
-                         self.a, self.r)
+        self.pub.publish(rospy.get_time(), self.mocap_vehicle_id, self.x, self.y, self.yaw,
+                         self.yaw_rate, self.v, self.a, self.r)
 
     def _update_pose(self, x, y, yaw):
         """Updates the vehicle pose. Calculates a new velocity by using the old position."""
@@ -180,11 +180,12 @@ def main(args):
         print('Need to enter the ID of the vehicle. ')
         sys.exit()
 
-    try:
-        if int(args[2]) == 1:   # If the second argument is one a simulated vehicle will be used.
-            mocap_used = False
-    except (IndexError, ValueError) as e:
-        print('Error: invalid second argument entered: {}'.format(e))
+    if len(args) > 2:
+        try:
+            if int(args[2]) == 1:   # If the second argument is 1 a simulated vehicle will be used.
+                mocap_used = False
+        except (IndexError, ValueError) as e:
+            print('Error: invalid second argument entered: {}'.format(e))
 
     frequency = 20              # Publishing frequency in Hz.
 

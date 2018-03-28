@@ -29,7 +29,7 @@ class TrxVehicle(object):
                  trx_topic_name='cmd_vel'):
 
         # Name of rosbag file that logs data.
-        self.bag_filename_prefix = 'measurement_' + vehicle_id + '_'
+        self.bag_filename_prefix = vehicle_id + '_'
         self.bag_filename_suffix = '.bag'
         self.bag_filename = self.get_filename(self.bag_filename_prefix, self.bag_filename_suffix,
                                               padding=2)

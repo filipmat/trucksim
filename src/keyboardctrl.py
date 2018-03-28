@@ -192,12 +192,12 @@ def main(screen):
     velocity_zero = 1500
     velocity_min = 900
     velocity_max = 2100
-    velocity_step = 10
+    velocity_step = 20
 
     angle_zero = 1500
     angle_min = 900
     angle_max = 2100
-    angle_step = 10
+    angle_step = 20
 
     if len(sys.argv) > 1:
         vehicle_id = sys.argv[1]

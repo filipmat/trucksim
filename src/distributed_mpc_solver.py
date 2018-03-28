@@ -70,11 +70,13 @@ class MPC(object):
         # Problem.
         self.prob = cvxpy.Problem(cvxpy.Minimize(1))
 
+        self.SAFETY_CONSTRAINTS_ACTIVE = True   # TODO: remove.
+
         # Problem constraints.
-        state_constraint1, state_constraint2 = self._get_state_constraints()  # Fixed.
-        input_constraint1, input_constraint2 = self._get_input_constraints()  # Fixed.
-        dynamics_constraints1 = self._get_dynamics_constraints_part_one()  # Update during mpc.
-        dynamics_constraints2 = self._get_dynamics_constraints_part_two()     # Fixed.
+        state_constraint1, state_constraint2 = self._get_state_constraints()    # Fixed.
+        input_constraint1, input_constraint2 = self._get_input_constraints()    # Fixed.
+        dynamics_constraints1 = self._get_dynamics_constraints_part_one()       # Update during mpc.
+        dynamics_constraints2 = self._get_dynamics_constraints_part_two()       # Fixed.
 
         self.prob.constraints = state_constraint1
         self.prob.constraints += state_constraint2
@@ -82,7 +84,7 @@ class MPC(object):
         self.prob.constraints += input_constraint2
         self.prob.constraints += dynamics_constraints1  # Update during mpc.
         self.prob.constraints += dynamics_constraints2
-        if not self.is_leader:
+        if not self.is_leader and self.SAFETY_CONSTRAINTS_ACTIVE:
             # Update during mpc.
             self.prob.constraints += self._get_safety_constraints(0, [0], [0])
 
@@ -189,7 +191,7 @@ class MPC(object):
 
     def _update_safety_constraints(self, current_time, preceding_timestamps, preceding_positions):
         """Updates the safety constraint. """
-        if not self.is_leader:
+        if not self.is_leader and self.SAFETY_CONSTRAINTS_ACTIVE:
             self.prob.constraints[6] = self._get_safety_constraints(current_time,
                                                                     preceding_timestamps,
                                                                     preceding_positions)[0]
@@ -261,6 +263,7 @@ class MPC(object):
             trajectory = numpy.array(self.u.value[:]).flatten()
             return trajectory
         except TypeError:
+            print('MPC returning acc = 0')
             return numpy.zeros(self.h*self.nu)
 
     def get_predicted_states(self):

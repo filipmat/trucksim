@@ -145,9 +145,9 @@ def main(args):
     pwm_topic_type = PWM
 
     # Data for controller reference path.
-    x_radius = 1.7
+    x_radius = 1.4
     y_radius = 1.2
-    center = [0, -y_radius]
+    center = [0.2, -y_radius/2]
 
     # Constant velocity of vehicle.
     v_ref = 1
