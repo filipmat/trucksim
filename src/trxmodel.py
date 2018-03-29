@@ -6,12 +6,6 @@ import math
 
 axle_length = 0.33                      # Length between wheel pairs.
 
-# Values for old linear model. Not correct for trx vehicle.
-zero_angle_input = 1500                 # Input signal for which the wheel angle is zero.
-zero_velocity_input = 1500              # Input signal for which the velocity is zero.
-angle_input_factor = 300/(math.pi/6)    # y/x: a change of y input gives x radians wheel angle.
-speed_input_factor = 100./(-1)          # y/x: a change of y input gives x m/s velocity.
-
 throttle_min = 1500
 throttle_max = 2100
 
@@ -39,8 +33,6 @@ def wheel_angle_to_steering_input(wheel_angle):
     for i, k in enumerate(coefficients):
         steering_input += k*wheel_angle**i
 
-    #steering_input = wheel_angle * angle_input_factor + zero_angle_input
-
     return steering_input
 
 
@@ -55,8 +47,6 @@ def steering_input_to_wheel_angle(steering_input):
 
     for i, k in enumerate(coefficients):
         wheel_angle += k*steering_input**i
-
-    #wheel_angle = (steering_input - zero_angle_input) / angle_input_factor
 
     return wheel_angle
 
@@ -78,8 +68,6 @@ def throttle_input_to_linear_velocity(throttle_input):
     if linear_velocity < 0:
         return 0
 
-    #linear_velocity = (throttle_input - zero_velocity_input) / speed_input_factor
-
     return linear_velocity
 
 
@@ -90,8 +78,6 @@ def linear_velocity_to_throttle_input(linear_velocity):
 
     for i, k in enumerate(speed_to_throttle_k):
         throttle_input += k*linear_velocity**i
-
-    #throttle_input = linear_velocity * speed_input_factor + zero_velocity_input
 
     return throttle_input
 
@@ -107,9 +93,9 @@ def wheel_angle_to_angular_velocity(wheel_angle, linear_velocity):
 def angular_velocity_to_wheel_angle(angular_velocity, linear_velocity):
     """Returns the wheel angle corresponding to the desired angular velocity at the given
     linear velocity. """
-    try:
+    if linear_velocity != 0:
         wheel_angle = math.atan(angular_velocity*axle_length/linear_velocity)
-    except ZeroDivisionError:
+    else:
         wheel_angle = 0     # No turning if vehicle is standing still.
 
     return wheel_angle
