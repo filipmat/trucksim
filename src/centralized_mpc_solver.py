@@ -55,27 +55,34 @@ class MPC(object):
         self.x = cvxpy.Variable((self.h + 1) * self.nx * self.n)
         self.u = cvxpy.Variable(self.h * self.nu * self.n)
 
-        v_slack_cost_factor = 100
+        self.v_slack_cost_factor = 100
         self.v_slack = cvxpy.Variable((self.h + 1) * self.n)
-        self.v_slack_P = numpy.eye((self.h + 1) * self.n)*v_slack_cost_factor
 
-        safety_slack_cost_factor = 100
+        self.safety_slack_cost_factor = 100
         self.safety_slack = cvxpy.Variable((self.h + 1) * (self.n - 1))
-        self.safety_slack_P = numpy.eye((self.h + 1) * self.n)*safety_slack_cost_factor
 
+        x0_constraints = self._get_x0_constraints(numpy.zeros(self.nx * self.n))
         state_constraints_lower = self._get_lower_state_constraints()
         state_constraints_upper = self._get_upper_state_constraints()
         input_constraints_upper, input_constraints_lower = self._get_input_constraints()
-        x0_constraints = self._get_x0_constraints(numpy.zeros(self.nx * self.n))
         dynamics_constraints = self._get_dynamics_constraints()
         safety_constraints = self._get_safety_constraints()
 
-        self.prob.contraints = state_constraints_lower + state_constraints_upper + \
-                               input_constraints_lower + input_constraints_upper + \
-                               x0_constraints + dynamics_constraints + \
-                               safety_constraints
+        self.prob.constraints = x0_constraints
+        self.prob.constraints += state_constraints_lower
+        self.prob.constraints += state_constraints_upper
+        self.prob.constraints += input_constraints_lower
+        self.prob.constraints += input_constraints_upper
+        self.prob.constraints += dynamics_constraints
+        self.prob.constraints += safety_constraints
 
-        # TODO: pre-compute matrices.
+        self.slack_cost = self._get_slack_cost()
+
+        self.state_P = sparse.kron(sparse.eye((self.h + 1) * self.n), (1 - self.zeta)*self.Q)
+        self.state_Q_diag = sparse.kron(sparse.eye((self.h + 1) * self.n), -(1 - self.zeta)*self.Q)
+
+        self.input_P = sparse.kron(sparse.eye(self.h * self.n), self.R)
+        self.R_diag = sparse.kron(sparse.eye(self.h * self.n), -self.R)
 
     def solve_mpc(self, vopt, x0s):
         """Solves the MPC problem. """
@@ -95,22 +102,53 @@ class MPC(object):
 
     def _update_x0_constraints(self, x0s):
         """Updates the constraint of the problem corresponding to x0. """
-        self.prob.constraints[4] = self._get_x0_constraints(x0s)
+        self.prob.constraints[0] = self._get_x0_constraints(x0s)[0]
 
     def _get_references(self, vopt, x0s):
         """Returns the state and input references obtained from current positions and optimal
         speed profile. """
-        # TODO: implement.
-        xref = numpy.zeros((self.h + 1) * self.nx * self.n)
+        pos_ref = numpy.zeros((self.h + 1) * self.n)
+
         uref = numpy.zeros(self.h * self.nu * self.n)
+
+        # Position reference is obtained from current position and speed profile.
+        for j in range(self.n):
+            pos_ref[(self.h + 1) * j] = x0s[j*2 + 1]
+            for i in range((self.h + 1) * j + 1, (self.h + 1) * (j + 1)):
+                pos_ref[i] = pos_ref[i - 1] + self.dt*vopt.get_speed_at(pos_ref[i - 1])
+
+        # Velocity reference is obtained from the speed profile at the reference positions.
+        vel_ref = vopt.get_speed_at(pos_ref)
+
+        # Acceleration reference is obtained from the velocity reference.
+        for j in range(self.n):
+            uref[(self.h * j):(self.h * (j + 1))] = \
+                (vel_ref[(self.h * j + 2):(self.h * (j + 1) + 2)] -
+                 vel_ref[(self.h * j + 1):(self.h * (j + 1) + 1)]) / self.dt
+
+        # State reference consists of velocities and positions.
+        xref = self._interleave_vectors(vel_ref, pos_ref)
 
         return xref, uref
 
     def _get_cost(self, xref, uref):
         """Returns the cost for the MPC problem. """
-        # TODO: implement.
 
-        return cvxpy.Minimize(1)
+        state_reference_cost = 0.5 * cvxpy.quad_form(self.x, self.state_P) + \
+                               self.state_Q_diag.dot(xref) * self.x
+
+        input_reference_cost = 0.5 * cvxpy.quad_form(self.u, self.input_P) + \
+                               self.R_diag.dot(uref) * self.u
+
+        cost = self.slack_cost
+        cost += state_reference_cost
+        cost += input_reference_cost
+
+        if self.n > 1:
+            # TODO: add cost for timegap tracking.
+            pass
+
+        return cost
 
     def _get_lower_state_constraints(self):
         """Returns the lower constraints for the states. Called on initialization. """
@@ -171,23 +209,61 @@ class MPC(object):
     def _get_safety_constraints(self):
         """Returns the constraints for keeping safety distance for the follower vehicles. Called
         on initialization. """
-        # position - preceding_position - slack_variable < - truck_length - safety_distance
         if self.n == 1:
             return []
 
+        # position - preceding_position - slack_variable < - truck_length - safety_distance
         constraint = [self.x[(self.h + 1) * self.nx + 1::2] -
                       self.x[1:(self.h + 1) * self.nx * (self.n - 1) + 1:2] - self.safety_slack <
                       - self.truck_length - self.safety_distance]
 
         return constraint
 
+    def _get_slack_cost(self):
+        """Returns the cost function for the velocity and safety distance slack variables. Called
+        on initialization. """
+        v_slack_P = numpy.eye((self.h + 1) * self.n)*self.v_slack_cost_factor
+
+        slack_cost = cvxpy.quad_form(self.v_slack, v_slack_P)
+
+        if self.n > 1:
+            safety_slack_P = numpy.eye((self.h + 1) * (self.n - 1)) * self.safety_slack_cost_factor
+
+            slack_cost += cvxpy.quad_form(self.safety_slack, safety_slack_P)
+
+        return slack_cost
+
     def get_instantaneous_accelerations(self):
         """Returns a list of accelerations containing the first control input for each vehicle. """
-        # TODO: implement.
-        return numpy.zeros(self.h * self.n)
+        try:
+            u_opt = numpy.squeeze(numpy.array(self.u.value))
+            accelerations = u_opt[0::self.h]
+        except (TypeError, IndexError) as e:
+            accelerations = numpy.zeros(self.n)
+            print('MPC returning acc = 0: {}'.format(e))
+
+        return accelerations
+
+    @staticmethod
+    def _interleave_vectors(a, b):
+        """Returns a numpy array where the values in a and b are interleaved."""
+        c = numpy.vstack([a, b]).reshape((-1,), order='F')
+
+        return c
+
+    @staticmethod
+    def print_numpy(a):
+        s = '['
+        for v in a.flatten():
+            s += ' {:.3f}'.format(v)
+        s += ' ]'
+
+        print(s)
 
 
 def main():
+    # TODO: remove main method.
+
     vehicle_amount = 1
     horizon = 5
     delta_t = 0.1
