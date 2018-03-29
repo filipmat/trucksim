@@ -67,6 +67,7 @@ class MPC(object):
         input_constraints_upper, input_constraints_lower = self._get_input_constraints()
         dynamics_constraints = self._get_dynamics_constraints()
         safety_constraints = self._get_safety_constraints()
+        slack_constraints = self._get_slack_constraints()
 
         self.prob.constraints = x0_constraints
         self.prob.constraints += state_constraints_lower
@@ -75,6 +76,7 @@ class MPC(object):
         self.prob.constraints += input_constraints_upper
         self.prob.constraints += dynamics_constraints
         self.prob.constraints += safety_constraints
+        self.prob.constraints += slack_constraints
 
         self.slack_cost = self._get_slack_cost()
 
@@ -216,6 +218,13 @@ class MPC(object):
         constraint = [self.x[(self.h + 1) * self.nx + 1::2] -
                       self.x[1:(self.h + 1) * self.nx * (self.n - 1) + 1:2] - self.safety_slack <
                       - self.truck_length - self.safety_distance]
+
+        return constraint
+
+    def _get_slack_constraints(self):
+        """Returns the constraints that the slack variables are positive.
+        Called on initialization. """
+        constraint = [self.v_slack > 0, self.safety_slack > 0]
 
         return constraint
 

@@ -78,14 +78,13 @@ class MPC(object):
         # Problem.
         self.prob = cvxpy.Problem(cvxpy.Minimize(1))
 
-        self.SAFETY_CONSTRAINTS_ACTIVE = True   # TODO: remove.
-
         # Problem constraints.
         state_constraint_lower = self._get_lower_state_constraints()    # Fixed
         state_constraint_upper = self._get_upper_state_constraints()    # Fixed
         input_constraint_lower, input_constraint_upper = self._get_input_constraints()    # Fixed.
         dynamics_constraints1 = self._get_x0_constraint()       # Update during mpc.
         dynamics_constraints2 = self._get_dynamics_constraints()       # Fixed.
+        slack_constraint_v, slack_constraint_safety = self._get_slack_constraints()
 
         self.prob.constraints = state_constraint_lower
         self.prob.constraints += state_constraint_upper
@@ -93,7 +92,9 @@ class MPC(object):
         self.prob.constraints += input_constraint_upper
         self.prob.constraints += dynamics_constraints1  # Update during mpc.
         self.prob.constraints += dynamics_constraints2
-        if not self.is_leader and self.SAFETY_CONSTRAINTS_ACTIVE:
+        self.prob.constraints += slack_constraint_v
+        self.prob.constraints += slack_constraint_safety
+        if not self.is_leader:
             # Update during mpc.
             self.prob.constraints += self._get_safety_constraints(0, [0], [0])
 
@@ -165,6 +166,13 @@ class MPC(object):
 
         return constraints
 
+    def _get_slack_constraints(self):
+        """Returns the constraints that the slack variables are positive.
+        Called on initialization. """
+        constraint = [self.v_slack > 0], [self.safety_slack > 0]
+
+        return constraint
+
     def solve_mpc(self, vopt, x0, current_time=None, preceding_timestamps=None,
                   preceding_velocities=None, preceding_positions=None):
         """Solves the MPC problem.
@@ -203,8 +211,8 @@ class MPC(object):
 
     def _update_safety_constraints(self, current_time, preceding_timestamps, preceding_positions):
         """Updates the safety constraint. """
-        if not self.is_leader and self.SAFETY_CONSTRAINTS_ACTIVE:
-            self.prob.constraints[6] = self._get_safety_constraints(current_time,
+        if not self.is_leader:
+            self.prob.constraints[8] = self._get_safety_constraints(current_time,
                                                                     preceding_timestamps,
                                                                     preceding_positions)[0]
 
