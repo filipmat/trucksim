@@ -214,10 +214,16 @@ class MPC(object):
         if self.n == 1:
             return []
 
-        # position - preceding_position - slack_variable < - truck_length - safety_distance
-        constraint = [self.x[(self.h + 1) * self.nx + 1::2] -
-                      self.x[1:(self.h + 1) * self.nx * (self.n - 1) + 1:2] - self.safety_slack <
-                      - self.truck_length - self.safety_distance]
+        matrix_preceding = sparse.kron(sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
+                                                      sparse.csc_matrix((self.h + 1, self.h + 1))]),
+                                       [0, -1])
+        matrix_follower = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
+                                                     sparse.eye((self.h + 1)*(self.n - 1))]),
+                                      [0, 1])
+
+        AX = matrix_preceding + matrix_follower
+
+        constraint = [AX * self.x - self.safety_slack < - self.truck_length - self.safety_distance]
 
         return constraint
 
