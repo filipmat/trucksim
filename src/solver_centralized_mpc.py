@@ -208,14 +208,19 @@ class MPC(object):
         if self.n <= 1:
             return []
 
-        matrix_preceding = sparse.kron(sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
-                                                      sparse.csc_matrix((self.h + 1, self.h + 1))]),
-                                       [0, -1])
-        matrix_follower = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
-                                                     sparse.eye((self.h + 1)*(self.n - 1))]),
-                                      [0, 1])
+        # Matrix for getting preceding position.
+        matrix_preceding_position = sparse.kron(
+            sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
+                           sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1))]),
+            [0, 1])
 
-        AX = matrix_preceding + matrix_follower
+        # Matrix for getting follower position
+        matrix_follower_position = sparse.kron(
+            sparse.hstack([sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1)),
+                           sparse.eye((self.h + 1)*(self.n - 1))]),
+            [0, 1])
+
+        AX = matrix_follower_position - matrix_preceding_position
 
         constraint = [AX * self.x - self.safety_slack < - truck_length - safety_distance]
 
@@ -265,23 +270,26 @@ class MPC(object):
         if self.n <= 1:
             return []
 
-        # Create matrix for preceding position - follower position.
-        matrix_preceding = sparse.kron(sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
-                                                      sparse.csc_matrix((self.h + 1, self.h + 1))]),
-                                       [0, 1])
-        matrix_follower = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
-                                                     sparse.eye((self.h + 1)*(self.n - 1))]),
-                                      [0, -1])
+        # Matrix for getting preceding position.
+        matrix_preceding_position = sparse.kron(
+            sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
+                           sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1))]),
+            [0, 1])
 
-        A_preceding_follow = matrix_preceding + matrix_follower
+        # Matrix for getting follower position
+        matrix_follower_position = sparse.kron(
+            sparse.hstack([sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1)),
+                           sparse.eye((self.h + 1)*(self.n - 1))]),
+            [0, 1])
 
         # Matrix for the velocity of the follower vehicle.
-        A_follow_v = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
-                                                     sparse.eye((self.h + 1)*(self.n - 1))]),
-                                      [-timegap, 0])
+        matrix_follower_velocity = sparse.kron(
+            sparse.hstack([sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1)),
+                           sparse.eye((self.h + 1)*(self.n - 1))]),
+            [-timegap, 0])
 
         # AX*x = preceding_position - follower position - timegap*(follower velocity)
-        AX = A_preceding_follow + A_follow_v
+        AX = matrix_preceding_position - matrix_follower_position + matrix_follower_velocity
 
         # Final cost is (AX*x)'P(AX*x).
         P = sparse.kron(sparse.eye((self.h + 1) * (self.n - 1)), self.zeta*self.Q[1, 1])
