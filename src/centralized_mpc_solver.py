@@ -21,7 +21,6 @@ class MPC(object):
         self.h = horizon
         self.zeta = zeta
         self.Q = Q
-        self.R = R
         self.truck_length = truck_length
         self.safety_distance = safety_distance
         self.timegap = timegap
@@ -58,7 +57,7 @@ class MPC(object):
         self.v_slack_cost_factor = 100
         self.v_slack = cvxpy.Variable((self.h + 1) * self.n)
 
-        self.safety_slack_cost_factor = 100
+        self.safety_slack_cost_factor = 10000
         self.safety_slack = cvxpy.Variable((self.h + 1) * (self.n - 1))
 
         x0_constraints = self._get_x0_constraints(numpy.zeros(self.nx * self.n))
@@ -67,7 +66,8 @@ class MPC(object):
         input_constraints_upper, input_constraints_lower = self._get_input_constraints()
         dynamics_constraints = self._get_dynamics_constraints()
         safety_constraints = self._get_safety_constraints()
-        slack_constraints = self._get_slack_constraints()
+        v_slack_constraints = self._get_v_slack_constraints()
+        safety_slack_constraints = self._get_safety_slack_constraints()
 
         self.prob.constraints = x0_constraints
         self.prob.constraints += state_constraints_lower
@@ -75,16 +75,21 @@ class MPC(object):
         self.prob.constraints += input_constraints_lower
         self.prob.constraints += input_constraints_upper
         self.prob.constraints += dynamics_constraints
-        self.prob.constraints += safety_constraints
-        self.prob.constraints += slack_constraints
+        self.prob.constraints += v_slack_constraints
 
-        self.slack_cost = self._get_slack_cost()
+        if self.n > 1:
+            self.prob.constraints += safety_constraints
+            self.prob.constraints += safety_slack_constraints
 
-        self.state_P = sparse.kron(sparse.eye((self.h + 1) * self.n), (1 - self.zeta)*self.Q)
-        self.state_Q_diag = sparse.kron(sparse.eye((self.h + 1) * self.n), -(1 - self.zeta)*self.Q)
+        self.v_slack_cost = self._get_v_slack_cost()
+        self.safety_slack_cost = self._get_safety_slack_cost()
+        self.timegap_cost = self._get_timegap_cost()
 
-        self.input_P = sparse.kron(sparse.eye(self.h * self.n), self.R)
-        self.R_diag = sparse.kron(sparse.eye(self.h * self.n), -self.R)
+        self.state_P = sparse.kron(sparse.eye((self.h + 1) * self.n), (1 - zeta)*Q)
+        self.state_Q_diag = sparse.kron(sparse.eye((self.h + 1) * self.n), -(1 - zeta)*Q)
+
+        self.input_P = sparse.kron(sparse.eye(self.h * self.n), R)
+        self.R_diag = sparse.kron(sparse.eye(self.h * self.n), -R)
 
     def solve_mpc(self, vopt, x0s):
         """Solves the MPC problem. """
@@ -124,9 +129,9 @@ class MPC(object):
 
         # Acceleration reference is obtained from the velocity reference.
         for j in range(self.n):
-            uref[(self.h * j):(self.h * (j + 1))] = \
-                (vel_ref[(self.h * j + 2):(self.h * (j + 1) + 2)] -
-                 vel_ref[(self.h * j + 1):(self.h * (j + 1) + 1)]) / self.dt
+            uref[self.h * j:self.h * (j + 1)] = \
+                (vel_ref[(self.h + 1) * j + 1:(self.h + 1) * (j + 1) + 0] -
+                 vel_ref[(self.h + 1) * j + 0:(self.h + 1) * (j + 1) - 1]) / self.dt
 
         # State reference consists of velocities and positions.
         xref = self._interleave_vectors(vel_ref, pos_ref)
@@ -142,13 +147,13 @@ class MPC(object):
         input_reference_cost = 0.5 * cvxpy.quad_form(self.u, self.input_P) + \
                                self.R_diag.dot(uref) * self.u
 
-        cost = self.slack_cost
+        cost = self.v_slack_cost
         cost += state_reference_cost
         cost += input_reference_cost
 
         if self.n > 1:
-            # TODO: add cost for timegap tracking.
-            pass
+            cost += self.safety_slack_cost
+            cost += self.timegap_cost
 
         return cost
 
@@ -211,7 +216,7 @@ class MPC(object):
     def _get_safety_constraints(self):
         """Returns the constraints for keeping safety distance for the follower vehicles. Called
         on initialization. """
-        if self.n == 1:
+        if self.n <= 1:
             return []
 
         matrix_preceding = sparse.kron(sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
@@ -227,26 +232,68 @@ class MPC(object):
 
         return constraint
 
-    def _get_slack_constraints(self):
-        """Returns the constraints that the slack variables are positive.
-        Called on initialization. """
-        constraint = [self.v_slack > 0, self.safety_slack > 0]
+    def _get_v_slack_constraints(self):
+        """Returns the constraints that the velocity slack variable is positive. Called on
+        initialization. """
+        constraint = [self.v_slack > 0]
 
         return constraint
 
-    def _get_slack_cost(self):
-        """Returns the cost function for the velocity and safety distance slack variables. Called
-        on initialization. """
+    def _get_safety_slack_constraints(self):
+        """Returns the constraints that the safety distance slack variable is positive. Called on
+        initialization. """
+        if self.n > 1:
+            constraint = [self.safety_slack > 0]
+        else:
+            constraint = []
+
+        return constraint
+
+    def _get_v_slack_cost(self):
+        """Returns the cost function for the velocity slack variable. Called on initialization. """
         v_slack_P = numpy.eye((self.h + 1) * self.n)*self.v_slack_cost_factor
 
-        slack_cost = cvxpy.quad_form(self.v_slack, v_slack_P)
+        cost = cvxpy.quad_form(self.v_slack, v_slack_P)
 
+        return cost
+
+    def _get_safety_slack_cost(self):
+        """Returns the cost function for the safety distance slack variable. Called on
+        initialization. """
         if self.n > 1:
             safety_slack_P = numpy.eye((self.h + 1) * (self.n - 1)) * self.safety_slack_cost_factor
 
-            slack_cost += cvxpy.quad_form(self.safety_slack, safety_slack_P)
+            cost = cvxpy.quad_form(self.safety_slack, safety_slack_P)
+        else:
+            cost = []
 
-        return slack_cost
+        return cost
+
+    def _get_timegap_cost(self):
+        """Returns the cost function for timegap tracking. Called on initialization. """
+        if self.n <= 1:
+            return []
+
+        matrix_preceding = sparse.kron(sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
+                                                      sparse.csc_matrix((self.h + 1, self.h + 1))]),
+                                       [0, 1])
+        matrix_follower = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
+                                                     sparse.eye((self.h + 1)*(self.n - 1))]),
+                                      [0, -1])
+
+        A_preceding_follow = matrix_preceding + matrix_follower
+
+        A_follow_v = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
+                                                     sparse.eye((self.h + 1)*(self.n - 1))]),
+                                      [-self.timegap, 0])
+
+        AX = A_preceding_follow + A_follow_v
+
+        P = sparse.kron(sparse.eye((self.h + 1) * (self.n - 1)), self.zeta*self.Q[1, 1])
+
+        timegap_cost = cvxpy.quad_form(AX*self.x, P)
+
+        return timegap_cost
 
     def get_instantaneous_accelerations(self):
         """Returns a list of accelerations containing the first control input for each vehicle. """
@@ -274,44 +321,3 @@ class MPC(object):
         s += ' ]'
 
         print(s)
-
-
-def main():
-    # TODO: remove main method.
-
-    vehicle_amount = 1
-    horizon = 5
-    delta_t = 0.1
-    Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
-    Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.7
-    Q = numpy.array([1, 0, 0, 0.5]).reshape(2, 2)  # State tracking.
-    R = numpy.array([1]) * 0.1  # Input tracking.
-    velocity_min = 0.
-    velocity_max = 2.
-    position_min = -100000.
-    position_max = 1000000.
-    acceleration_min = -0.5
-    acceleration_max = 0.5
-    truck_length = 0.2
-    safety_distance = 0.1
-    timegap = 1.
-
-    xmin = numpy.array([velocity_min, position_min])
-    xmax = numpy.array([velocity_max, position_max])
-    umin = numpy.array([acceleration_min])
-    umax = numpy.array([acceleration_max])
-
-    mpc = MPC(vehicle_amount, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length, safety_distance,
-              timegap, xmin=xmin, xmax=xmax, umin=umin, umax=umax)
-
-if __name__ == '__main__':
-    main()
-
-
-
-
-
-
-
-
