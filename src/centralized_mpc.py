@@ -97,9 +97,8 @@ class CentralizedMPC(object):
                 rospy.get_time() - self.starting_phase_start_time > self.starting_phase_duration):
 
             if True in self.first_callbacks.values():
-                self.running = False
-                print('Did not obtain initial positions of all vehicles during initialization. ' +
-                      'Try starting again. ')
+                print('Could not obtain initial positions of all vehicles during initialization. ')
+                self.stop()
             else:
                 self.starting_phase = False
                 self._order_follower_path_positions()
@@ -111,8 +110,9 @@ class CentralizedMPC(object):
         self.k += 1
 
     def _control(self):
-        start_time = rospy.get_time()
+        start_time = rospy.get_time()   # Used for checking average iteration time.
 
+        # String for printing information.
         info = ''
         if self.k % self.print_interval_samples == 0 and self.verbose:
             print_info = True
@@ -125,24 +125,36 @@ class CentralizedMPC(object):
 
         x0s = self._get_x0s()  # Get initial conditions.
 
-        self.mpc.solve_mpc(self.vopt, x0s)
+        self.mpc.solve_mpc(self.vopt, x0s)  # Solve MPC problem.
 
-        accelerations = self.mpc.get_instantaneous_accelerations()
+        accelerations = self.mpc.get_instantaneous_accelerations()  # Get accelerations.
 
-        # Translate acceleration into speed control input. Get steering control input from
-        # Frenet controller.
+        # For each vehicle translate acceleration into speed control input. Get steering control
+        # input from Frenet controller.
         for i, vehicle_id in enumerate(self.vehicle_ids):
+            # Get velocity from acceleration and velocity control input from vehicle model.
             v = self._get_vel(vehicle_id, accelerations[i])
             self.speed_pwms[vehicle_id] = self._get_throttle_input(vehicle_id, v)
 
+            # Get angular velocity from Frenet controller and steering input from vehicle model.
             omega = self._get_omega(vehicle_id)
             self.angle_pwms[vehicle_id] = trxmodel.angular_velocity_to_steering_input(omega, v)
 
+            # Add entries to information string. 
             if print_info:
                 info += '\n{}: v = {:.2f} ({:.2f}), a = {:5.2f}'.format(
                     vehicle_id, self.poses[vehicle_id][3],
                     self.vopt.get_speed_at(self.path_positions[vehicle_id].get_position()),
                     accelerations[i])
+
+                if i > 0:
+                    gap = (self.path_positions[self.vehicle_ids[i - 1]].get_position() -
+                           self.path_positions[vehicle_id].get_position())
+                    if self.poses[vehicle_id][3] == 0:
+                        timegap = 0
+                    else:
+                        timegap = gap / self.poses[vehicle_id][3]
+                    info += ', gap = {:.2f}, t_gap = {:.2f}'.format(gap, timegap)
 
         self._publish_vehicle_commands()
 
@@ -286,15 +298,15 @@ def main(args):
     k_i = 0
     k_d = 3
 
-    horizon = 5
+    horizon = 10
     delta_t = 0.1
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.90
+    zeta = 0.75
     s0 = 0.
     v0 = 0.
     Q_v = 1  # Part of Q matrix for velocity tracking.
-    Q_s = 0.5  # Part of Q matrix for position tracking.
+    Q_s = 1  # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2)  # State tracking.
     R_acc = 0.1
     R = numpy.array([1]) * R_acc  # Input tracking.
@@ -304,8 +316,8 @@ def main(args):
     position_max = 1000000.
     acceleration_min = -0.5
     acceleration_max = 0.5
-    truck_length = 0.2
-    safety_distance = 0.1
+    truck_length = 0.3
+    safety_distance = 0.2
     timegap = 1.
 
     x0 = numpy.array([s0, v0])
