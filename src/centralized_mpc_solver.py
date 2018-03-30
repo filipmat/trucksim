@@ -14,62 +14,52 @@ class MPC(object):
                  safety_distance, timegap,
                  xmin=None, xmax=None, umin=None, umax=None):
 
+        v_slack_cost_factor = 100
+        safety_slack_cost_factor = 10000
+
+        self.nx = Ad.shape[0]
+        self.nu = Bd.shape[1]
+
+        self.inf = 1000000  # "Infinity" used when there are no limits given.
+
+        if xmin is None:
+            xmin = -self.inf*numpy.ones(self.nx)  # No min state limit.
+
+        if xmax is None:
+            xmax = self.inf*numpy.ones(self.nx)  # No max state limit.
+
+        if umin is None:
+            umin = -self.inf*numpy.ones(self.nu)  # No min input limit.
+
+        if umax is None:
+            umax = self.inf*numpy.ones(self.nu)  # No max input limit.
+
         self.n = vehicle_amount
-        self.Ad = Ad
-        self.Bd = Bd
         self.dt = delta_t
         self.h = horizon
         self.zeta = zeta
         self.Q = Q
-        self.truck_length = truck_length
-        self.safety_distance = safety_distance
-        self.timegap = timegap
 
-        self.inf = 1000000  # "Infinity" used when there are no limits given.
-
-        self.nx = self.Ad.shape[0]
-        self.nu = self.Bd.shape[1]
-
-        if xmin is None:
-            self.xmin = -self.inf*numpy.ones(self.nx)  # No min state limit.
-        else:
-            self.xmin = xmin
-
-        if xmax is None:
-            self.xmax = self.inf*numpy.ones(self.nx)  # No max state limit.
-        else:
-            self.xmax = xmax
-
-        if umin is None:
-            self.umin = -self.inf*numpy.ones(self.nu)  # No min input limit.
-        else:
-            self.umin = umin
-
-        if umax is None:
-            self.umax = self.inf*numpy.ones(self.nu)  # No max input limit.
-        else:
-            self.umax = umax
-
+        # Create problem.
         self.prob = cvxpy.Problem(cvxpy.Minimize(1))
+
+        # Optimization variables.
         self.x = cvxpy.Variable((self.h + 1) * self.nx * self.n)
         self.u = cvxpy.Variable(self.h * self.nu * self.n)
-
-        self.v_slack_cost_factor = 100
         self.v_slack = cvxpy.Variable((self.h + 1) * self.n)
-
-        self.safety_slack_cost_factor = 10000
         self.safety_slack = cvxpy.Variable((self.h + 1) * (self.n - 1))
 
+        # Optimization constraints.
         x0_constraints = self._get_x0_constraints(numpy.zeros(self.nx * self.n))
-        state_constraints_lower = self._get_lower_state_constraints()
-        state_constraints_upper = self._get_upper_state_constraints()
-        input_constraints_upper, input_constraints_lower = self._get_input_constraints()
-        dynamics_constraints = self._get_dynamics_constraints()
-        safety_constraints = self._get_safety_constraints()
+        state_constraints_lower = self._get_lower_state_constraints(xmin)
+        state_constraints_upper = self._get_upper_state_constraints(xmax)
+        input_constraints_upper, input_constraints_lower = self._get_input_constraints(umin, umax)
+        dynamics_constraints = self._get_dynamics_constraints(Ad, Bd)
+        safety_constraints = self._get_safety_constraints(truck_length, safety_distance)
         v_slack_constraints = self._get_v_slack_constraints()
         safety_slack_constraints = self._get_safety_slack_constraints()
 
-        self.prob.constraints = x0_constraints
+        self.prob.constraints = x0_constraints              # Constraint updated each iteration.
         self.prob.constraints += state_constraints_lower
         self.prob.constraints += state_constraints_upper
         self.prob.constraints += input_constraints_lower
@@ -81,13 +71,14 @@ class MPC(object):
             self.prob.constraints += safety_constraints
             self.prob.constraints += safety_slack_constraints
 
-        self.v_slack_cost = self._get_v_slack_cost()
-        self.safety_slack_cost = self._get_safety_slack_cost()
-        self.timegap_cost = self._get_timegap_cost()
+        # Cost functions.
+        self.v_slack_cost = self._get_v_slack_cost(v_slack_cost_factor)
+        self.safety_slack_cost = self._get_safety_slack_cost(safety_slack_cost_factor)
+        self.timegap_cost = self._get_timegap_cost(timegap)
 
+        # Pre-computed matrices for reference tracking cost.
         self.state_P = sparse.kron(sparse.eye((self.h + 1) * self.n), (1 - zeta)*Q)
         self.state_Q_diag = sparse.kron(sparse.eye((self.h + 1) * self.n), -(1 - zeta)*Q)
-
         self.input_P = sparse.kron(sparse.eye(self.h * self.n), R)
         self.R_diag = sparse.kron(sparse.eye(self.h * self.n), -R)
 
@@ -139,7 +130,8 @@ class MPC(object):
         return xref, uref
 
     def _get_cost(self, xref, uref):
-        """Returns the cost for the MPC problem. """
+        """Returns the cost for the MPC problem. Uses pre-computed matrices and costs in order to
+        speed up computation. Called each iteration. """
 
         state_reference_cost = 0.5 * cvxpy.quad_form(self.x, self.state_P) + \
                                self.state_Q_diag.dot(xref) * self.x
@@ -147,55 +139,51 @@ class MPC(object):
         input_reference_cost = 0.5 * cvxpy.quad_form(self.u, self.input_P) + \
                                self.R_diag.dot(uref) * self.u
 
-        cost = self.v_slack_cost
-        cost += state_reference_cost
-        cost += input_reference_cost
+        cost = self.v_slack_cost +  state_reference_cost + input_reference_cost
 
         if self.n > 1:
-            cost += self.safety_slack_cost
-            cost += self.timegap_cost
+            cost += self.safety_slack_cost + self.timegap_cost
 
         return cost
 
-    def _get_lower_state_constraints(self):
+    def _get_lower_state_constraints(self, xmin):
         """Returns the lower constraints for the states. Called on initialization. """
         AX = sparse.eye((self.h + 1) * self.nx * self.n)
-        lower = numpy.tile(self.xmin, (self.h + 1) * self.n)
+        lower = numpy.tile(xmin, (self.h + 1) * self.n)
 
         constraint = [AX * self.x >= lower]
 
         return constraint
 
-    def _get_upper_state_constraints(self):
+    def _get_upper_state_constraints(self, xmax):
         """Returns the upper constraints for the states. Includes the slack variable for velocity
         limitation. Called on initialization. """
         AX = sparse.kron(sparse.eye((self.h + 1) * self.n), [1, 0])
-        upper = numpy.ones((self.h + 1) * self.n)*self.xmax[0]
+        upper = numpy.ones((self.h + 1) * self.n)*xmax[0]
 
         constraint = [AX*self.x - self.v_slack <= upper]
 
         return constraint
 
-    def _get_input_constraints(self):
+    def _get_input_constraints(self, umin, umax):
         """Returns the constraints corrseponding to input limits. Called on initialization. """
         AU = numpy.eye(self.h * self.nu * self.n)
-        upper = numpy.tile(self.umax, self.h * self.n)
-        lower = numpy.tile(self.umin, self.h * self.n)
+        lower = numpy.tile(umin, self.h * self.n)
+        upper = numpy.tile(umax, self.h * self.n)
 
         constraint = [AU * self.u <= upper], [AU * self.u >= lower]
 
         return constraint
 
-    def _get_dynamics_constraints(self):
+    def _get_dynamics_constraints(self, Ad, Bd):
         """Returns the constraints for x(k+1) = Ax(k) + Bu(k). Called on initialization. """
-        a = sparse.kron(sparse.hstack([sparse.eye(self.h), sparse.csc_matrix((self.h, 1))]),
-                         self.Ad) + \
-             sparse.kron(sparse.hstack([sparse.csc_matrix((self.h, 1)), sparse.eye(self.h)]),
-                         -sparse.eye(self.nx))
+        a = sparse.kron(sparse.hstack([sparse.eye(self.h), sparse.csc_matrix((self.h, 1))]), Ad) + \
+            sparse.kron(sparse.hstack([sparse.csc_matrix((self.h, 1)), sparse.eye(self.h)]),
+                        -sparse.eye(self.nx))
 
         AX = sparse.kron(sparse.eye(self.n), a)
 
-        BB = sparse.kron(sparse.eye(self.h * self.n), self.Bd)
+        BB = sparse.kron(sparse.eye(self.h * self.n), Bd)
 
         constraint = [AX * self.x + BB * self.u == 0]
 
@@ -213,9 +201,10 @@ class MPC(object):
 
         return constraint
 
-    def _get_safety_constraints(self):
+    def _get_safety_constraints(self, truck_length, safety_distance):
         """Returns the constraints for keeping safety distance for the follower vehicles. Called
-        on initialization. """
+        on initialization.
+        Constraint: preceding position - follower position - truck length > safety distance. """
         if self.n <= 1:
             return []
 
@@ -228,7 +217,7 @@ class MPC(object):
 
         AX = matrix_preceding + matrix_follower
 
-        constraint = [AX * self.x - self.safety_slack < - self.truck_length - self.safety_distance]
+        constraint = [AX * self.x - self.safety_slack < - truck_length - safety_distance]
 
         return constraint
 
@@ -249,19 +238,19 @@ class MPC(object):
 
         return constraint
 
-    def _get_v_slack_cost(self):
+    def _get_v_slack_cost(self, cost_factor):
         """Returns the cost function for the velocity slack variable. Called on initialization. """
-        v_slack_P = numpy.eye((self.h + 1) * self.n)*self.v_slack_cost_factor
+        v_slack_P = numpy.eye((self.h + 1) * self.n) * cost_factor
 
         cost = cvxpy.quad_form(self.v_slack, v_slack_P)
 
         return cost
 
-    def _get_safety_slack_cost(self):
+    def _get_safety_slack_cost(self, cost_factor):
         """Returns the cost function for the safety distance slack variable. Called on
         initialization. """
         if self.n > 1:
-            safety_slack_P = numpy.eye((self.h + 1) * (self.n - 1)) * self.safety_slack_cost_factor
+            safety_slack_P = numpy.eye((self.h + 1) * (self.n - 1)) * cost_factor
 
             cost = cvxpy.quad_form(self.safety_slack, safety_slack_P)
         else:
@@ -269,11 +258,14 @@ class MPC(object):
 
         return cost
 
-    def _get_timegap_cost(self):
-        """Returns the cost function for timegap tracking. Called on initialization. """
+    def _get_timegap_cost(self, timegap):
+        """Returns the cost function for timegap tracking. Called on initialization.
+        The cost is a quadratic cost with P = zeta*Q. The cost is minimized when
+        (preceding position - follower position) / (follower velocity) = timegap. """
         if self.n <= 1:
             return []
 
+        # Create matrix for preceding position - follower position.
         matrix_preceding = sparse.kron(sparse.hstack([sparse.eye((self.h + 1)*(self.n - 1)),
                                                       sparse.csc_matrix((self.h + 1, self.h + 1))]),
                                        [0, 1])
@@ -283,12 +275,15 @@ class MPC(object):
 
         A_preceding_follow = matrix_preceding + matrix_follower
 
+        # Matrix for the velocity of the follower vehicle.
         A_follow_v = sparse.kron(sparse.hstack([sparse.csc_matrix((self.h + 1, self.h + 1)),
                                                      sparse.eye((self.h + 1)*(self.n - 1))]),
-                                      [-self.timegap, 0])
+                                      [-timegap, 0])
 
+        # AX*x = preceding_position - follower position - timegap*(follower velocity)
         AX = A_preceding_follow + A_follow_v
 
+        # Final cost is (AX*x)'P(AX*x).
         P = sparse.kron(sparse.eye((self.h + 1) * (self.n - 1)), self.zeta*self.Q[1, 1])
 
         timegap_cost = cvxpy.quad_form(AX*self.x, P)
@@ -312,12 +307,3 @@ class MPC(object):
         c = numpy.vstack([a, b]).reshape((-1,), order='F')
 
         return c
-
-    @staticmethod
-    def print_numpy(a):
-        s = '['
-        for v in a.flatten():
-            s += ' {:.3f}'.format(v)
-        s += ' ]'
-
-        print(s)
