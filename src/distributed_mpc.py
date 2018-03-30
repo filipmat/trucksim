@@ -12,7 +12,7 @@ import sys
 
 import speed_profile
 import path
-import distributed_mpc_solver
+import solver_distributed_mpc
 import frenetpid
 import controllerGUI
 import trxmodel
@@ -107,7 +107,7 @@ class Controller(object):
         rospy.Subscriber('global/run', ControllerRun, self._start_stop_callback)
 
         # MPC controller for speed control.
-        self.mpc = distributed_mpc_solver.MPC(Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
+        self.mpc = solver_distributed_mpc.MPC(Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                                               safety_distance, timegap, xmin=xmin, xmax=xmax,
                                               umin=umin, umax=umax, x0=x0, is_leader=is_leader)
 
