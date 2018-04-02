@@ -82,11 +82,18 @@ class MPC(object):
         self.input_P = sparse.kron(sparse.eye(self.h * self.n), R)
         self.R_diag = sparse.kron(sparse.eye(self.h * self.n), -R)
 
-    def solve_mpc(self, vopt, x0s):
+    def solve_mpc(self, speed_profile, x0s):
+        """
+        Solves the MPC problem.
+        :param speed_profile: speed profile, instance of speed_profile.Speed.
+        :param x0s: array containing the initial values [velocity(0)_0, position(0)_0,
+        velocity(0)_1, position(0)_1, ...] for all vehicles 0, ..., n-1.
+        :return: None
+        """
         """Solves the MPC problem. """
         self._update_x0_constraints(x0s)
 
-        xref, uref = self._get_references(vopt, x0s)
+        xref, uref = self._get_references(speed_profile, x0s)
 
         cost = self._get_cost(xref, uref)
 
@@ -102,7 +109,7 @@ class MPC(object):
         """Updates the constraint of the problem corresponding to x0. """
         self.prob.constraints[0] = self._get_x0_constraints(x0s)[0]
 
-    def _get_references(self, vopt, x0s):
+    def _get_references(self, speed_profile, x0s):
         """Returns the state and input references obtained from current positions and optimal
         speed profile. """
         pos_ref = numpy.zeros((self.h + 1) * self.n)
@@ -113,10 +120,10 @@ class MPC(object):
         for j in range(self.n):
             pos_ref[(self.h + 1) * j] = x0s[j*2 + 1]
             for i in range((self.h + 1) * j + 1, (self.h + 1) * (j + 1)):
-                pos_ref[i] = pos_ref[i - 1] + self.dt*vopt.get_speed_at(pos_ref[i - 1])
+                pos_ref[i] = pos_ref[i - 1] + self.dt * speed_profile.get_speed_at(pos_ref[i - 1])
 
         # Velocity reference is obtained from the speed profile at the reference positions.
-        vel_ref = vopt.get_speed_at(pos_ref)
+        vel_ref = speed_profile.get_speed_at(pos_ref)
 
         # Acceleration reference is obtained from the velocity reference.
         for j in range(self.n):
@@ -244,7 +251,8 @@ class MPC(object):
         return constraint
 
     def _get_v_slack_cost(self, cost_factor):
-        """Returns the cost function for the velocity slack variable. Called on initialization. """
+        """Returns the cost function for the velocity slack variable. The cost is quadratic.
+        Called on initialization. """
         v_slack_P = numpy.eye((self.h + 1) * self.n) * cost_factor
 
         cost = cvxpy.quad_form(self.v_slack, v_slack_P)
@@ -252,8 +260,8 @@ class MPC(object):
         return cost
 
     def _get_safety_slack_cost(self, cost_factor):
-        """Returns the cost function for the safety distance slack variable. Called on
-        initialization. """
+        """Returns the cost function for the safety distance slack variable. The cost is quadratic.
+        Called on initialization. """
         if self.n > 1:
             safety_slack_P = numpy.eye((self.h + 1) * (self.n - 1)) * cost_factor
 
@@ -276,7 +284,7 @@ class MPC(object):
                            sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1))]),
             [0, 1])
 
-        # Matrix for getting follower position
+        # Matrix for getting follower position.
         matrix_follower_position = sparse.kron(
             sparse.hstack([sparse.csc_matrix(((self.h + 1)*(self.n - 1), self.h + 1)),
                            sparse.eye((self.h + 1)*(self.n - 1))]),
@@ -299,7 +307,9 @@ class MPC(object):
         return timegap_cost
 
     def get_instantaneous_accelerations(self):
-        """Returns a list of accelerations containing the first control input for each vehicle. """
+        """Returns an array of accelerations containing the first control input for each vehicle.
+        :return: numpy array [acceleration0, acceleration1, ...] for all vehicles 0, ..., n-1.
+        """
         try:
             u_opt = numpy.squeeze(numpy.array(self.u.value))
             accelerations = u_opt[0::self.h]
