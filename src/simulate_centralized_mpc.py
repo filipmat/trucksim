@@ -8,6 +8,7 @@ import sys
 import numpy
 import math
 import time
+import os
 
 from matplotlib import pyplot
 
@@ -29,6 +30,8 @@ class CentralizedMPC(object):
 
         self.pt = vehicle_path
 
+        self.timegap = timegap
+
         # Optimal speed profile in space. If none given, optimal speed is 1 m/s everywhere.
         if vopt is None:
             vopt = speed_profile.Speed([1], [1])
@@ -41,6 +44,7 @@ class CentralizedMPC(object):
         self.n = len(vehicles)
 
         # Matrices for storing control errors etc.
+        self.timestamps = self.dt*numpy.arange(self.iterations)
         self.xx = numpy.zeros((self.n, self.iterations))
         self.yy = numpy.zeros((self.n, self.iterations))
         self.positions = numpy.zeros((self.n, self.iterations))
@@ -51,7 +55,6 @@ class CentralizedMPC(object):
         self.velocity_errors = numpy.zeros((self.n, self.iterations))
         self.speed_inputs = numpy.zeros((self.n, self.iterations))
         self.steering_inputs = numpy.zeros((self.n, self.iterations))
-        self.timestamps = self.dt*numpy.arange(self.iterations)
 
         self.frenets = []           # Path tracking.
         self.path_positions = []    # Longitudinal path positions.
@@ -111,6 +114,7 @@ class CentralizedMPC(object):
             self.angle_pwms[i] = trxmodel.angular_velocity_to_steering_input(omega, x[3])
 
             vehicle.update(self.dt, self.speed_pwms[i], self.angle_pwms[i])
+            self.path_positions[i].update_position([x[0], x[1]])
 
             # Store information.
             pos = self.path_positions[i].get_position()
@@ -186,27 +190,73 @@ class CentralizedMPC(object):
 
         pyplot.figure(figsize=(10, 10))
 
-        ax = pyplot.subplot(211)
-        ax.set_title('Speed')
-        ax.set_xlabel('longitudinal position, m')
-        ax.set_ylabel('speed, m/s')
+        ax = pyplot.subplot(311)
+        ax.set_ylim([0, self.timegap*2])
+        ax.set_title('Timegap')
+        ax.set_xlabel('s')
+        ax.set_ylabel('gap')
         for i in range(len(self.vehicles)):
-            pyplot.plot(self.xx[i], self.yy[i],
-                        label=self.vehicles[i].ID)
-        pyplot.plot(x, y, label='reference')
+            pyplot.plot(self.timestamps, self.timegaps[i], label=self.vehicles[i].ID)
+        pyplot.plot(self.timestamps, numpy.ones(len(self.timestamps))*self.timegap,
+                    label='reference')
         pyplot.legend(loc='upper right')
 
-        ax = pyplot.subplot(212)
+        ax = pyplot.subplot(312)
+        ax.set_title('Speed space')
         for i in range(len(self.vehicles)):
             pyplot.plot(self.positions[i], self.velocities[i], label=self.vehicles[i].ID)
         voptend = numpy.argmax(self.vopt.pos > numpy.max(self.positions))
         if voptend == 0:
             voptend = len(self.vopt.pos)
-        pyplot.plot(self.vopt.pos[:voptend], self.vopt.vel[:voptend],
-                    label='reference')
+        pyplot.plot(self.vopt.pos[:voptend], self.vopt.vel[:voptend], label='reference')
         pyplot.legend(loc='upper right')
 
+        ax = pyplot.subplot(313)
+        ax.set_title('Speed time')
+        for i in range(len(self.vehicles)):
+            pyplot.plot(self.timestamps, self.velocities[i], label=self.vehicles[i].ID)
+        pyplot.legend(loc='upper right')
+
+        pyplot.tight_layout(pad=0.5, w_pad=0.5, h_pad=2)
         pyplot.show()
+
+    def save_data(self, filename):
+        """Save data to file. """
+
+        name = self._get_filename(filename, '.txt')
+
+        print('Saving data to {} ...'.format(name))
+
+        header = 't'
+        data = self.timestamps[:]
+
+        for i in range(len(self.vehicles)):
+            data = numpy.vstack([data, self.xx[i], self.yy[i], self.positions[i],
+                                 self.velocities[i], self.accelerations[i], self.timegaps[i],
+                                 self.path_errors[i], self.velocity_errors[i], self.speed_inputs[i],
+                                 self.steering_inputs[i]])
+            header += ',x,y,s,v,a,timegap,path_error,v_error,throttle,steering'
+
+        data = data.T
+
+        with open(name, 'w+') as datafile_id:
+            numpy.savetxt(datafile_id, data, fmt='%.4f', header=header, delimiter=',')
+
+    @staticmethod
+    def _get_filename(prefix, suffix, padding=2):
+        """Sets a filename on the form filename_prefixZ.bag where Z is the first free number.
+        Pads with zeros, e.g. first free number 43 and padding=5 will give 00043. """
+        __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+
+        i = 0
+        while os.path.exists(os.path.join(__location__, '{}{}{}'.format(
+                prefix, str(i).zfill(padding), suffix))):
+            i += 1
+
+        filename = os.path.join(__location__, '{}{}{}'.format(
+            prefix, str(i).zfill(padding), suffix))
+
+        return filename
 
 
 class Trx(object):
@@ -316,7 +366,7 @@ def main(args):
     safety_distance = 0.2
     timegap = 1.
 
-    simulation_length = 10  # How many seconds to simulate.
+    simulation_length = 20  # How many seconds to simulate.
 
     xmin = numpy.array([velocity_min, position_min])
     xmax = numpy.array([velocity_max, position_max])
@@ -339,6 +389,8 @@ def main(args):
     center = [0.2, -y_radius / 2]
     pts = 400
 
+    save_data = True
+
     pt = path.Path()
     pt.gen_circle_path([x_radius, y_radius], points=pts, center=center)
 
@@ -351,6 +403,9 @@ def main(args):
                          xmin=xmin, xmax=xmax, umin=umin,umax=umax, vopt=vopt)
 
     mpc.run()
+
+    if save_data:
+        mpc.save_data('centralized')
 
     mpc.plot_stuff()
 
