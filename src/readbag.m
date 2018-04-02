@@ -1,5 +1,5 @@
 %%
-filename = 'ut02.txt';
+filename = 'model_measurement_0326_trx_auto_02.txt';
 
 fid = fopen(filename);
 firstline = fgetl(fid);
@@ -24,7 +24,7 @@ v = C{7}(~standstill_indices);
 a = C{8}(~standstill_indices);
 r = C{9}(~standstill_indices);
 steering = C{10}(~standstill_indices);
-velocity = C{11}(~standstill_indices);
+throttle = C{11}(~standstill_indices);
 gear = C{12}(~standstill_indices);
 
 alpha = atan(yaw_rate.*0.33./v);
@@ -44,10 +44,10 @@ yaw_rate_right = yaw_rate(right);
 alpha_left = alpha(left);
 alpha_right = alpha(right);
 
-forward = and(velocity > 1500, v < 3);
+forward = and(throttle > 1500, v < 3);
 
 v_forward = v(forward);
-velocity_forward = velocity(forward);
+throttle_forward = throttle(forward);
 a_forward = a(forward);
 
 % Steering as function of wheel angle.
@@ -62,22 +62,22 @@ steering_left_k = [steering_left.^0 steering_left steering_left.^2] ...
     \ alpha_left;
 
 % Throttle as function of speed. 
-v_forward_k = [v_forward.^0 v_forward v_forward.^2] \ velocity_forward;
+v_forward_k = [v_forward.^0 v_forward v_forward.^2] \ throttle_forward;
 
 % Speed as function of throttle
-velocity_forward_k = [velocity_forward.^0 velocity_forward ...
-    velocity_forward.^2] \ v_forward;
+throttle_forward_k = [throttle_forward.^0 throttle_forward ...
+    throttle_forward.^2] \ v_forward;
 
 %% speed to throttle input
 v_forward_sorted = sort(v_forward);
-velocity_forward_test = v_forward_k(1)*v_forward_sorted.^0 + ...
+throttle_forward_test = v_forward_k(1)*v_forward_sorted.^0 + ...
     v_forward_k(2)*v_forward_sorted + ...
     v_forward_k(3)*v_forward_sorted.^2;
 
 figure
-plot(v_forward, velocity_forward, '.')
+plot(v_forward, throttle_forward, '.')
 hold on
-plot(v_forward_sorted, velocity_forward_test, 'r')
+plot(v_forward_sorted, throttle_forward_test, 'r')
 
 %% right turn (wheel angle < 0) to steering input
 alpha_right_sorted = sort(alpha_right);
@@ -102,17 +102,17 @@ hold on
 plot(alpha_left_sorted, steering_left_test, 'r')
 
 %% throttle input to speed
-velocity_forward_sorted = sort(velocity_forward);
-v_forward_test = velocity_forward_k(1)*velocity_forward_sorted.^0 + ...
-    velocity_forward_k(2)*velocity_forward_sorted + ...
-    velocity_forward_k(3)*velocity_forward_sorted.^2;
+throttle_forward_sorted = sort(throttle_forward);
+v_forward_test = throttle_forward_k(1)*throttle_forward_sorted.^0 + ...
+    throttle_forward_k(2)*throttle_forward_sorted + ...
+    throttle_forward_k(3)*throttle_forward_sorted.^2;
 
 figure
-plot(velocity_forward, v_forward, '.')
+plot(throttle_forward, v_forward, '.')
 hold on
-plot(velocity_forward_sorted, v_forward_test, 'r')
+plot(throttle_forward_sorted, v_forward_test, 'r')
 
-%% wheel angle to steering input
+%% right (> 1500) steering input to wheel angle
 steering_right_sorted = sort(steering_right);
 alpha_right_test = steering_right_k(1)*steering_right_sorted.^0 + ...
     steering_right_k(2)*steering_right_sorted + ...
@@ -123,7 +123,7 @@ plot(steering_right, alpha_right, '.')
 hold on
 plot(steering_right_sorted, alpha_right_test, 'r')
 
-%% wheel angle to steering input
+%% left (< 1500) steering input to wheel angle
 steering_left_sorted = sort(steering_left);
 alpha_left_test = steering_left_k(1)*steering_left_sorted.^0 + ...
     steering_left_k(2)*steering_left_sorted + ...
