@@ -5,16 +5,19 @@ Centralized MPC controller.
 """
 
 import rospy
+import rosbag
 import sys
 import numpy
+import os
 
 import speed_profile
 import path
 import frenetpid
-import centralized_mpc_solver
+import solver_centralized_mpc
 import trxmodel
 
 from trucksim.msg import MocapState, PWM, ControllerRun
+from trucksim.srv import SetMeasurement
 
 
 class CentralizedMPC(object):
@@ -22,7 +25,8 @@ class CentralizedMPC(object):
     def __init__(self, position_topic_name, control_topic_name, vehicle_ids,
                  vehicle_path, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
                  safety_distance, timegap, k_p, k_i, k_d,
-                 xmin=None, xmax=None, umin=None, umax=None, vopt=None):
+                 xmin=None, xmax=None, umin=None, umax=None, vopt=None,
+                 recording_service_name='cmpc/set_measurement'):
 
         rospy.init_node('centralized_mpc', anonymous=True)
 
@@ -30,6 +34,10 @@ class CentralizedMPC(object):
         self.vehicle_ids = vehicle_ids
 
         self.running = False                # If controller is running or not.
+
+        self.recording = False
+        self.bag_filename_prefix = 'cmpc'
+        self.bag_filename = self.get_filename(self.bag_filename_prefix, '.bag', padding=2)
 
         # Variables for starting phase.
         self.starting_phase_duration = 2.
@@ -52,7 +60,7 @@ class CentralizedMPC(object):
         self.vopt = vopt
 
         # Centralized MPC solver.
-        self.mpc = centralized_mpc_solver.MPC(len(self.vehicle_ids), Ad, Bd, self.dt, horizon, zeta,
+        self.mpc = solver_centralized_mpc.MPC(len(self.vehicle_ids), Ad, Bd, self.dt, horizon, zeta,
                                               Q, R, truck_length, safety_distance, timegap,
                                               xmin, xmax, umin, umax)
 
@@ -80,6 +88,9 @@ class CentralizedMPC(object):
 
         # Subscriber for starting and stopping the controller.
         rospy.Subscriber('global/run', ControllerRun, self._start_stop_callback)
+
+        # Service for starting or stopping recording.
+        rospy.Service(recording_service_name, SetMeasurement, self.set_measurement)
 
         print('\nCentralized MPC initialized. Vehicles: {}.\n'.format(self.vehicle_ids))
 
@@ -117,7 +128,7 @@ class CentralizedMPC(object):
         if self.k % self.print_interval_samples == 0 and self.verbose:
             print_info = True
             avg_time = self.control_iteration_time_sum / self.print_interval_samples
-            info += '- - - - - k = {:3.0f}, average time = {:.3f} - - - - - '.format(
+            info += '\nk = {:3.0f}, average time = {:.3f} - - - - - - - - - - '.format(
                 self.k, avg_time)
             self.control_iteration_time_sum = 0
         else:
@@ -133,30 +144,42 @@ class CentralizedMPC(object):
         # input from Frenet controller.
         for i, vehicle_id in enumerate(self.vehicle_ids):
             # Get velocity from acceleration and velocity control input from vehicle model.
+            x = self.poses[vehicle_id]
+
             v = self._get_vel(vehicle_id, accelerations[i])
             self.speed_pwms[vehicle_id] = self._get_throttle_input(vehicle_id, v)
 
             # Get angular velocity from Frenet controller and steering input from vehicle model.
-            omega = self._get_omega(vehicle_id)
-            self.angle_pwms[vehicle_id] = trxmodel.angular_velocity_to_steering_input(omega, v)
+            omega = self._get_omega(vehicle_id, accelerations[i])
+            # TODO: check which variant of v to use.
+            vo = x[3]   # Current velocity.
+            # vo = v      # Target velocity according to MPC.
+            # vo = trxmodel.throttle_input_to_linear_velocity(self.speed_pwms[vehicle_id])
+            self.angle_pwms[vehicle_id] = trxmodel.angular_velocity_to_steering_input(omega, vo)
 
-            # Add entries to information string. 
+            # Record data.
+            pos = self.path_positions[vehicle_id].get_position()
+
+            timegap = 0
+            if i > 0 and x[3] != 0:
+                timegap = (self.path_positions[self.vehicle_ids[i - 1]].get_position() - pos) / x[3]
+
+            if self.recording:
+                # TODO: finish
+                self._record_data()
+
+            # Add entries to information string.
             if print_info:
                 info += '\n{}: v = {:.2f} ({:.2f}), a = {:5.2f}'.format(
                     vehicle_id, self.poses[vehicle_id][3],
-                    self.vopt.get_speed_at(self.path_positions[vehicle_id].get_position()),
+                    self.vopt.get_speed_at(pos),
                     accelerations[i])
 
                 if i > 0:
-                    gap = (self.path_positions[self.vehicle_ids[i - 1]].get_position() -
-                           self.path_positions[vehicle_id].get_position())
-                    if self.poses[vehicle_id][3] == 0:
-                        timegap = 0
-                    else:
-                        timegap = gap / self.poses[vehicle_id][3]
-                    info += ', gap = {:.2f}, t_gap = {:.2f}'.format(gap, timegap)
+                    info += ', t_gap = {:.2f}'.format(timegap)
 
         self._publish_vehicle_commands()
+
 
         if print_info:
             print(info)
@@ -172,10 +195,16 @@ class CentralizedMPC(object):
 
         return x0s
 
-    def _get_omega(self, vehicle_id):
+    def _get_omega(self, vehicle_id, acceleration):
         """Returns the control input omega for the specified vehicle. """
+        # TODO: check which variant of speed measurement gives correct path tracking.
         pose = self.poses[vehicle_id]
-        omega = self.frenets[vehicle_id].get_omega(pose[0], pose[1], pose[2], pose[3])
+
+        v = pose[3]
+        # v = trxmodel.throttle_input_to_linear_velocity(self.speed_pwms[vehicle_id])
+        # v = pose[3] + self.dt * acceleration
+
+        omega = self.frenets[vehicle_id].get_omega(pose[0], pose[1], pose[2], v)
 
         return omega
 
@@ -278,6 +307,62 @@ class CentralizedMPC(object):
 
         self.stop()
 
+    def _record_data(self):
+        if self.recording:
+            try:
+                #self.bag.write('cmpc', tuple(self.vehicles_information))
+                pass
+            except ValueError as e:
+                print('Error when writing to bag: {}'.format(e))
+
+    def set_measurement(self, req):
+        """Service callback to start and stop recording. """
+
+        # Stop recording.
+        if self.recording and not req.log:
+            self.stop_recording()
+
+        # Start recording.
+        elif (not self.recording) and req.log:
+            self.start_recording()
+
+        return True
+
+    def start_recording(self):
+        """Starts the recording. """
+        self.recording = True
+
+        self.bag_filename = self.get_filename(self.bag_filename_prefix, '.bag', padding=2)
+        self.bag = rosbag.Bag(self.bag_filename, 'w')
+
+        print('Recording to {}.'.format(self.bag_filename))
+
+    def stop_recording(self):
+        """Stops the recording. """
+        self.recording = False
+
+        try:
+            self.bag.close()
+            print('Recording finished in {}.'.format(self.bag_filename))
+        except NameError as e:
+            print('Error when stopping recording: {}'.format(e))
+
+    @staticmethod
+    def get_filename(prefix, suffix, padding=0):
+        """Sets a filename on the form filename_prefixZ.bag where Z is the first free number.
+        Pads with zeros, e.g. first free number 43 and padding=5 will give 00043. """
+        __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+
+        i = 0
+        while os.path.exists(os.path.join(__location__, '{}{}{}'.format(
+                prefix, str(i).zfill(padding), suffix))):
+            i += 1
+
+        filename = os.path.join(__location__, '{}{}{}'.format(
+            prefix, str(i).zfill(padding), suffix))
+
+        return filename
+
 
 def main(args):
 
@@ -293,18 +378,19 @@ def main(args):
     # Topic name for publishing vehicle commands.
     control_topic_name = 'pwm_commands'
 
+    # Name for starting and stopping recording.
+    recording_service_name = 'cmpc/set_measurement'
+
     # PID parameters for path tracking.
     k_p = 0.5
-    k_i = 0
+    k_i = 0.001
     k_d = 3
 
-    horizon = 10
+    horizon = 20
     delta_t = 0.1
     Ad = numpy.matrix([[1., 0.], [delta_t, 1.]])
     Bd = numpy.matrix([[delta_t], [0.]])
-    zeta = 0.75
-    s0 = 0.
-    v0 = 0.
+    zeta = 0.5
     Q_v = 1  # Part of Q matrix for velocity tracking.
     Q_s = 1  # Part of Q matrix for position tracking.
     Q = numpy.array([Q_v, 0, 0, Q_s]).reshape(2, 2)  # State tracking.
@@ -320,21 +406,20 @@ def main(args):
     safety_distance = 0.2
     timegap = 1.
 
-    x0 = numpy.array([s0, v0])
     xmin = numpy.array([velocity_min, position_min])
     xmax = numpy.array([velocity_max, position_max])
     umin = numpy.array([acceleration_min])
     umax = numpy.array([acceleration_max])
 
     # Reference speed profile.
-    opt_v_pts = 1000  # How many points.
+    opt_v_pts = 400  # How many points.
     opt_v_max = 1.2
     opt_v_min = 0.8
     opt_v_period_length = 60  # Period in meters.
-    # vopt = speed_profile.Speed([1], [1])
     vopt = speed_profile.Speed()
     vopt.generate_sin(opt_v_min, opt_v_max, opt_v_period_length, opt_v_pts)
     vopt.repeating = True
+    # vopt = speed_profile.Speed([1], [1])
 
     # Controller reference path.
     x_radius = 1.4
@@ -346,9 +431,9 @@ def main(args):
     pt.gen_circle_path([x_radius, y_radius], points=pts, center=center)
 
     mpc = CentralizedMPC(position_topic_name, control_topic_name, vehicle_ids,
-                 pt, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
-                 safety_distance, timegap, k_p, k_i, k_d, xmin=xmin, xmax=xmax, umin=umin,
-                 umax=umax, vopt=vopt)
+                         pt, Ad, Bd, delta_t, horizon, zeta, Q, R, truck_length,
+                         safety_distance, timegap, k_p, k_i, k_d, xmin=xmin, xmax=xmax, umin=umin,
+                         umax=umax, vopt=vopt, recording_service_name=recording_service_name)
 
     mpc.run()
 
