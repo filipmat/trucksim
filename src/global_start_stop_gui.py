@@ -76,13 +76,13 @@ class GlobalRunGUI():
 
         # Actions for closing the window and pressing ctrl-C on the window.
         self.root.protocol('WM_DELETE_WINDOW', self.quit1)
-        self.root.bind('<Control-c>', self.quit2)
         self.root.bind('<Escape>', self.quit2)
 
         # Bind buttons for starting and stopping the controller.
         self.root.bind('e', self.keypress_stop)
         self.root.bind('q', self.keypress_stop)
         self.root.bind('s', self.keypress_stop)
+        self.root.bind('<Control-c>', self.keypress_stop)
         self.root.bind('w', self.keypress_start)
 
         self.root.mainloop()
