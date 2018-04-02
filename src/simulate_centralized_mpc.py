@@ -190,7 +190,7 @@ class CentralizedMPC(object):
 
         pyplot.figure(figsize=(10, 10))
 
-        ax = pyplot.subplot(311)
+        ax = pyplot.subplot(321)
         ax.set_ylim([0, self.timegap*2])
         ax.set_title('Timegap')
         ax.set_xlabel('s')
@@ -201,7 +201,7 @@ class CentralizedMPC(object):
                     label='reference')
         pyplot.legend(loc='upper right')
 
-        ax = pyplot.subplot(312)
+        ax = pyplot.subplot(322)
         ax.set_title('Speed space')
         for i in range(len(self.vehicles)):
             pyplot.plot(self.positions[i], self.velocities[i], label=self.vehicles[i].ID)
@@ -211,10 +211,17 @@ class CentralizedMPC(object):
         pyplot.plot(self.vopt.pos[:voptend], self.vopt.vel[:voptend], label='reference')
         pyplot.legend(loc='upper right')
 
-        ax = pyplot.subplot(313)
+        ax = pyplot.subplot(323)
         ax.set_title('Speed time')
         for i in range(len(self.vehicles)):
             pyplot.plot(self.timestamps, self.velocities[i], label=self.vehicles[i].ID)
+        pyplot.legend(loc='upper right')
+
+        ax = pyplot.subplot(324)
+        ax.set_title('Path')
+        for i in range(len(self.vehicles)):
+            pyplot.plot(self.xx[i], self.yy[i], label=self.vehicles[i].ID)
+        pyplot.plot(x, y, label='Reference')
         pyplot.legend(loc='upper right')
 
         pyplot.tight_layout(pad=0.5, w_pad=0.5, h_pad=2)
@@ -342,7 +349,7 @@ def main(args):
         sys.exit()
 
     # PID parameters for path tracking.
-    k_p = 0.25
+    k_p = 0.5
     k_i = -0.02
     k_d = 3
 
@@ -366,7 +373,7 @@ def main(args):
     safety_distance = 0.2
     timegap = 1.
 
-    simulation_length = 20  # How many seconds to simulate.
+    simulation_length = 40  # How many seconds to simulate.
 
     xmin = numpy.array([velocity_min, position_min])
     xmax = numpy.array([velocity_max, position_max])
@@ -405,7 +412,7 @@ def main(args):
     mpc.run()
 
     if save_data:
-        mpc.save_data('centralized')
+        mpc.save_data('sim_cmpc')
 
     mpc.plot_stuff()
 
