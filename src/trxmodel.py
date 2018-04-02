@@ -7,7 +7,8 @@ import math
 axle_length = 0.33                      # Length between wheel pairs.
 
 throttle_min = 1500
-throttle_max = 2100
+# Prevent velocity from decreasing if going above this value because of 2nd degree polynomial.
+throttle_max = 1990
 
 angle_to_steering_left_k = [1459, -87.2, -1633]
 angle_to_steering_right_k = [1642, -145, 1274]
